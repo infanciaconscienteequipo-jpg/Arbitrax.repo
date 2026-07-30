@@ -1,0 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --color-binance-black: #0b0e11;
+  --color-binance-dark: #12161a;
+  --color-binance-card: #181e25;
+  --color-binance-border: #2b313a;
+  --color-binance-green: #02c076;
+  --color-binance-red: #f6465d;
+  --color-binance-yellow: #f0b90b;
+  --color-binance-gray: #848e9c;
+  --color-binance-light: #eaecef;
+}
+
+/* Custom premium glows and animations */
+.premium-glow-green {
+  box-shadow: 0 0 20px rgba(2, 192, 118, 0.15);
+}
+
+.premium-glow-yellow {
+  box-shadow: 0 0 20px rgba(240, 185, 11, 0.15);
+}
+
+.premium-glow-red {
+  box-shadow: 0 0 20px rgba(246, 70, 93, 0.15);
+}
+
+.binance-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.binance-scrollbar::-webkit-scrollbar-track {
+  background: #12161a;
+}
+
+.binance-scrollbar::-webkit-scrollbar-thumb {
+  background: #2b313a;
+  border-radius: 3px;
+}
+
+.binance-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #848e9c;
+}
+
+/* Hide scrollbars completely while maintaining scroll functionality */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

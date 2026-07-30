@@ -1,0 +1,6 @@
+{
+  "name": "ArbitraX",
+  "description": "Plataforma profesional de gestión, control de saldos de billeteras en pesos y USDT, calculadora de arbitraje P2P y reportes de rentabilidad en tiempo real por turnos con interfaz estilo Binance Dark.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
