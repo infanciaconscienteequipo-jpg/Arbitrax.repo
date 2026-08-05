@@ -1,148 +1,195 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState } from 'react';
-import { Transaction, Wallet } from '../types';
-import { Search, Filter, ArrowUpRight, ArrowDownLeft, Wallet as WalletIcon, RefreshCw, Calendar, FileDown, Trash2, Clock, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
+import { Transaction, Wallet, ExchangeAccount, User } from '../types';
+import { Search, Filter, ArrowUpRight, ArrowDownLeft, Wallet as WalletIcon, Coins, FileDown, Trash2, Clock, SlidersHorizontal, Plus, ShieldCheck, DollarSign, CheckCircle2 } from 'lucide-react';
 
 interface MovimientosProps {
   transactions: Transaction[];
   wallets: Wallet[];
+  exchanges?: ExchangeAccount[];
+  users?: User[];
+  currentUser?: User | null;
   onClearTransactions?: () => void;
+  onAddTransaction?: (tx: Omit<Transaction, 'id'>) => void;
 }
 
 export default function Movimientos({
   transactions,
   wallets,
+  exchanges = [],
+  users = [],
+  currentUser,
   onClearTransactions,
+  onAddTransaction,
 }: MovimientosProps) {
-  const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  // P2P Trade Form State
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [tradeType, setTradeType] = useState<'compra' | 'venta'>('compra');
+  const [selectedWalletId, setSelectedWalletId] = useState('');
+  const [selectedExchangeId, setSelectedExchangeId] = useState('');
+  const [totalPesosInput, setTotalPesosInput] = useState<number | ''>('');
+  const [cryptoQtyInput, setCryptoQtyInput] = useState<number | ''>('');
+  const [cryptoTicker, setCryptoTicker] = useState('USDT');
+  const [clientOrSupplier, setClientOrSupplier] = useState('');
+  const [tradeNotes, setTradeNotes] = useState('');
+  const [formSuccess, setFormSuccess] = useState('');
+
+  // Filters State
+  const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
   const [cryptoFilter, setCryptoFilter] = useState('all');
   const [walletFilter, setWalletFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [vendorFilter, setVendorFilter] = useState('all');
   const [operatorSearch, setOperatorSearch] = useState('');
   const [generalSearch, setGeneralSearch] = useState('');
 
-  // Advanced Chronological Filters
-  const [useAdvancedTime, setUseAdvancedTime] = useState(false);
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [selectedYear, setSelectedYear] = useState('all');
-  const [selectedMonth, setSelectedMonth] = useState('all');
-  const [selectedDayOfMonth, setSelectedDayOfMonth] = useState('all');
-  const [selectedDayOfWeek, setSelectedDayOfWeek] = useState('all');
-  const [startHour, setStartHour] = useState('0');
-  const [endHour, setEndHour] = useState('23');
+  // Custom Date and Time Filters
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customStartTime, setCustomStartTime] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [customEndTime, setCustomEndTime] = useState('');
 
-  const MONTHS = [
-    { value: '0', label: 'Enero' },
-    { value: '1', label: 'Febrero' },
-    { value: '2', label: 'Marzo' },
-    { value: '3', label: 'Abril' },
-    { value: '4', label: 'Mayo' },
-    { value: '5', label: 'Junio' },
-    { value: '6', label: 'Julio' },
-    { value: '7', label: 'Agosto' },
-    { value: '8', label: 'Septiembre' },
-    { value: '9', label: 'Octubre' },
-    { value: '10', label: 'Noviembre' },
-    { value: '11', label: 'Diciembre' },
-  ];
+  const currentOrgId = currentUser?.organization_id || 'org-1';
 
-  const DAYS_OF_WEEK = [
-    { value: '1', label: 'Lunes' },
-    { value: '2', label: 'Martes' },
-    { value: '3', label: 'Miércoles' },
-    { value: '4', label: 'Jueves' },
-    { value: '5', label: 'Viernes' },
-    { value: '6', label: 'Sábado' },
-    { value: '0', label: 'Domingo' },
-  ];
+  // Auto-calc unit price: Monto ARS / Cantidad Crypto
+  const calculatedUnitPrice = (typeof totalPesosInput === 'number' && typeof cryptoQtyInput === 'number' && cryptoQtyInput > 0)
+    ? totalPesosInput / cryptoQtyInput
+    : 0;
 
-  // Extract unique years from transactions for the filter dropdown
-  const uniqueYears = Array.from(
-    new Set(transactions.map(t => new Date(t.timestamp).getFullYear().toString()))
-  ).filter(Boolean).sort();
-  
-  if (uniqueYears.length === 0) {
-    uniqueYears.push(new Date().getFullYear().toString());
-  }
+  // Auto-select defaults for form
+  React.useEffect(() => {
+    if (wallets.length > 0 && !selectedWalletId) setSelectedWalletId(wallets[0].id);
+    if (exchanges.length > 0 && !selectedExchangeId) setSelectedExchangeId(exchanges[0].id);
+  }, [wallets, exchanges]);
+
+  const handleCreateTrade = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onAddTransaction) return;
+
+    if (typeof totalPesosInput !== 'number' || totalPesosInput <= 0) return;
+    if (typeof cryptoQtyInput !== 'number' || cryptoQtyInput <= 0) return;
+
+    const walletObj = wallets.find(w => w.id === selectedWalletId);
+    if (walletObj?.blocked) {
+      alert(`⛔ La billetera "${walletObj.name}" está BLOQUEADA. Desbloquéela en el panel de Billeteras para realizar operaciones.`);
+      return;
+    }
+
+    const exchangeObj = exchanges.find(ex => ex.id === selectedExchangeId);
+
+    const now = new Date();
+    const isoStr = now.toISOString();
+    const dateStr = isoStr.split('T')[0];
+    const timeStr = now.toTimeString().split(' ')[0];
+
+    // Estimated Gain calculation for sales
+    let gain = 0;
+    if (tradeType === 'venta') {
+      const estimatedAvgBuyPrice = 1220; // Avg buy price ARS per USDT
+      gain = (calculatedUnitPrice - estimatedAvgBuyPrice) * cryptoQtyInput;
+    }
+
+    onAddTransaction({
+      type: tradeType,
+      timestamp: isoStr,
+      dateString: dateStr,
+      timeString: timeStr,
+      crypto: cryptoTicker,
+      quantity: cryptoQtyInput,
+      unitPrice: calculatedUnitPrice,
+      totalPesos: totalPesosInput,
+      walletId: selectedWalletId,
+      walletName: walletObj ? walletObj.name : 'Billetera',
+      operator: currentUser?.name || currentUser?.username || 'Operador',
+      client: tradeType === 'venta' ? clientOrSupplier : undefined,
+      supplier: tradeType === 'compra' ? clientOrSupplier : undefined,
+      gain: tradeType === 'venta' ? gain : undefined,
+      notes: `${tradeNotes} (Exchange: ${exchangeObj ? exchangeObj.name : 'P2P'})`,
+    });
+
+    setFormSuccess(`✅ Operación de ${tradeType.toUpperCase()} registrada exitosamente.`);
+    setTotalPesosInput('');
+    setCryptoQtyInput('');
+    setClientOrSupplier('');
+    setTradeNotes('');
+
+    setTimeout(() => setFormSuccess(''), 4000);
+  };
+
+  // Extract unique vendors for filter dropdown
+  const uniqueVendors = Array.from(
+    new Set([
+      ...users.map(u => u.name || u.username),
+      ...transactions.map(t => t.operator),
+    ].filter(Boolean))
+  );
 
   // Extract unique cryptos for filter
   const uniqueCryptos = Array.from(new Set(transactions.map(t => t.crypto.toUpperCase()))).filter(Boolean);
 
+  // Helper to safely obtain a Date object for a transaction
+  const getTxDate = (t: Transaction): Date | null => {
+    if (t.timestamp) {
+      const d = new Date(t.timestamp);
+      if (!isNaN(d.getTime())) return d;
+    }
+    if (t.dateString) {
+      const timeStr = t.timeString || '12:00:00';
+      const d = new Date(`${t.dateString}T${timeStr}`);
+      if (!isNaN(d.getTime())) return d;
+    }
+    return null;
+  };
+
   // Filter transactions
   const filteredTxs = transactions.filter(t => {
-    const txDate = new Date(t.timestamp);
+    const txDate = getTxDate(t);
     const now = new Date();
     
     // Time/Date Filtering
-    if (!useAdvancedTime) {
-      if (timeFilter === 'today') {
-        const todayStr = now.toISOString().split('T')[0];
-        const tStr = t.timestamp.split('T')[0];
-        if (todayStr !== tStr) return false;
-      } else if (timeFilter === 'week') {
-        const oneWeekAgo = new Date();
-        oneWeekAgo.setDate(now.getDate() - 7);
-        if (txDate < oneWeekAgo) return false;
-      } else if (timeFilter === 'month') {
-        const oneMonthAgo = new Date();
-        oneMonthAgo.setMonth(now.getMonth() - 1);
-        if (txDate < oneMonthAgo) return false;
-      }
-    } else {
-      // Advanced Chronological Filters
-      // Date Range (Local time comparison)
-      if (startDate) {
-        const start = new Date(startDate + 'T00:00:00');
-        if (txDate < start) return false;
-      }
-      if (endDate) {
-        const end = new Date(endDate + 'T23:59:59');
-        if (txDate > end) return false;
+    if (timeFilter === 'today') {
+      const todayStr = now.toISOString().split('T')[0];
+      const tStr = t.dateString || (t.timestamp ? t.timestamp.split('T')[0] : '');
+      if (todayStr !== tStr) return false;
+    } else if (timeFilter === 'week') {
+      const oneWeekAgo = new Date();
+      oneWeekAgo.setDate(now.getDate() - 7);
+      if (!txDate || txDate < oneWeekAgo) return false;
+    } else if (timeFilter === 'month') {
+      const oneMonthAgo = new Date();
+      oneMonthAgo.setMonth(now.getMonth() - 1);
+      if (!txDate || txDate < oneMonthAgo) return false;
+    } else if (timeFilter === 'custom') {
+      if (!txDate) return false;
+      const txMs = txDate.getTime();
+
+      // Lower bound check (Fecha + Hora desde)
+      if (customStartDate) {
+        const timePart = customStartTime ? customStartTime : '00:00';
+        const startMs = new Date(`${customStartDate}T${timePart}:00`).getTime();
+        if (!isNaN(startMs) && txMs < startMs) return false;
+      } else if (customStartTime) {
+        const [sH, sM] = customStartTime.split(':').map(Number);
+        const txMinutes = txDate.getHours() * 60 + txDate.getMinutes();
+        const startMinutes = (sH || 0) * 60 + (sM || 0);
+        if (txMinutes < startMinutes) return false;
       }
 
-      // Year Filter
-      if (selectedYear !== 'all') {
-        if (txDate.getFullYear().toString() !== selectedYear) return false;
+      // Upper bound check (Fecha + Hora hasta)
+      if (customEndDate) {
+        const timePart = customEndTime ? customEndTime : '23:59';
+        const endMs = new Date(`${customEndDate}T${timePart}:59`).getTime();
+        if (!isNaN(endMs) && txMs > endMs) return false;
+      } else if (customEndTime) {
+        const [eH, eM] = customEndTime.split(':').map(Number);
+        const txMinutes = txDate.getHours() * 60 + txDate.getMinutes();
+        const endMinutes = (eH || 0) * 60 + (eM || 0);
+        if (txMinutes > endMinutes) return false;
       }
-
-      // Month Filter (0-11)
-      if (selectedMonth !== 'all') {
-        if (txDate.getMonth().toString() !== selectedMonth) return false;
-      }
-
-      // Day of Month Filter (1-31)
-      if (selectedDayOfMonth !== 'all') {
-        if (txDate.getDate().toString() !== selectedDayOfMonth) return false;
-      }
-
-      // Day of Week Filter (1=Lunes, 2=Martes... 0=Domingo)
-      if (selectedDayOfWeek !== 'all') {
-        if (txDate.getDay().toString() !== selectedDayOfWeek) return false;
-      }
-
-      // Hour Filter (0-23)
-      const hour = txDate.getHours();
-      const sHour = parseInt(startHour, 10);
-      const eHour = parseInt(endHour, 10);
-      if (hour < sHour || hour > eHour) return false;
     }
 
-    // Crypto filter
-    if (cryptoFilter !== 'all' && t.crypto.toUpperCase() !== cryptoFilter.toUpperCase()) {
-      return false;
-    }
+    if (cryptoFilter !== 'all' && t.crypto.toUpperCase() !== cryptoFilter.toUpperCase()) return false;
+    if (walletFilter !== 'all' && t.walletId !== walletFilter) return false;
 
-    // Wallet filter
-    if (walletFilter !== 'all' && t.walletId !== walletFilter) {
-      return false;
-    }
-
-    // Type filter
     if (typeFilter !== 'all') {
       if (typeFilter === 'compra' && t.type !== 'compra') return false;
       if (typeFilter === 'venta' && t.type !== 'venta') return false;
@@ -150,12 +197,9 @@ export default function Movimientos({
       if (typeFilter === 'egreso' && t.type !== 'egreso_fondos') return false;
     }
 
-    // Operator filter
-    if (operatorSearch && !t.operator.toLowerCase().includes(operatorSearch.toLowerCase())) {
-      return false;
-    }
+    if (vendorFilter !== 'all' && t.operator.toLowerCase() !== vendorFilter.toLowerCase()) return false;
+    if (operatorSearch && !t.operator.toLowerCase().includes(operatorSearch.toLowerCase())) return false;
 
-    // General search (notes, client, supplier, unit price, quantity)
     if (generalSearch) {
       const query = generalSearch.toLowerCase();
       const matchNotes = t.notes?.toLowerCase().includes(query);
@@ -163,17 +207,14 @@ export default function Movimientos({
       const matchSupplier = t.supplier?.toLowerCase().includes(query);
       const matchWallet = t.walletName.toLowerCase().includes(query);
       const matchCrypto = t.crypto.toLowerCase().includes(query);
-      const matchQty = t.quantity.toString().includes(query);
       
-      if (!matchNotes && !matchClient && !matchSupplier && !matchWallet && !matchCrypto && !matchQty) {
-        return false;
-      }
+      if (!matchNotes && !matchClient && !matchSupplier && !matchWallet && !matchCrypto) return false;
     }
 
     return true;
   });
 
-  // Calculate stats on the filtered set
+  // Calculate stats
   const filteredTotalPurchases = filteredTxs
     .filter(t => t.type === 'compra')
     .reduce((sum, t) => sum + t.totalPesos, 0);
@@ -194,25 +235,13 @@ export default function Movimientos({
     }).format(amount);
   };
 
-  const formatDateTime = (isoString: string) => {
-    const d = new Date(isoString);
-    return d.toLocaleString('es-AR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  // Export to CSV helper
   const handleExportCSV = () => {
     if (filteredTxs.length === 0) return;
     
-    const headers = ['ID', 'Fecha/Hora', 'Tipo', 'Cripto', 'Cantidad', 'Precio Unitario (ARS)', 'Total (ARS)', 'Billetera', 'Operador', 'Cliente/Proveedor', 'Ganancia (ARS)', 'Observaciones'];
+    const headers = ['ID', 'Fecha/Hora', 'Tipo', 'Cripto', 'Cantidad', 'Precio Unitario (ARS)', 'Total (ARS)', 'Billetera', 'Operador', 'Notas'];
     const rows = filteredTxs.map(t => [
       t.id,
-      formatDateTime(t.timestamp),
+      `${t.dateString} ${t.timeString}`,
       t.type.toUpperCase(),
       t.crypto,
       t.quantity,
@@ -220,8 +249,6 @@ export default function Movimientos({
       t.totalPesos,
       t.walletName,
       t.operator,
-      t.type === 'compra' ? (t.supplier || '') : (t.client || ''),
-      t.gain || 0,
       t.notes || '',
     ]);
 
@@ -231,51 +258,197 @@ export default function Movimientos({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `movimientos_cripto_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", `movimientos_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   return (
-    <div className="space-y-6">
-      {/* Search and Filters Section */}
+    <div className="space-y-6 font-mono">
+      {/* HEADER & FORM TOGGLE */}
       <div className="bg-binance-card rounded-2xl border border-binance-border p-6 space-y-4 shadow-md">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <h2 className="text-xl font-bold text-white flex items-center gap-2 font-display">
-            <Filter className="w-5 h-5 text-binance-yellow" />
-            Historial de Operaciones y Movimientos
-          </h2>
+          <div>
+            <h2 className="text-xl font-bold text-white flex items-center gap-2 font-display">
+              <Filter className="w-5 h-5 text-binance-yellow" />
+              Historial y Registro de Movimientos P2P
+            </h2>
+            <p className="text-xs text-binance-gray mt-1">
+              Registro instantáneo de Compras y Ventas con cálculo automatizado de precios y saldos.
+            </p>
+          </div>
 
           <div className="flex gap-2 w-full md:w-auto">
+            {onAddTransaction && (
+              <button
+                onClick={() => setShowAddForm(!showAddForm)}
+                className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-extrabold rounded-xl bg-binance-yellow text-binance-black hover:bg-binance-yellow/90 shadow-lg transition-all cursor-pointer uppercase tracking-wider"
+              >
+                <Plus className="w-4 h-4" />
+                {showAddForm ? 'Ocultar Formulario' : 'Cargar Movimiento P2P'}
+              </button>
+            )}
+
             <button
               onClick={handleExportCSV}
               disabled={filteredTxs.length === 0}
-              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
-                filteredTxs.length > 0 
-                  ? 'bg-binance-black hover:bg-binance-black/80 text-white border-binance-border' 
-                  : 'bg-binance-black/30 text-binance-gray border-binance-border/50 cursor-not-allowed'
-              }`}
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl border border-binance-border bg-binance-black text-white hover:bg-binance-black/80 transition-all cursor-pointer"
             >
               <FileDown className="w-4 h-4" />
               Exportar CSV
             </button>
-            
-            {onClearTransactions && (
-              <button
-                onClick={() => {
-                  if (confirm('¿Está seguro de que desea reiniciar todo el historial de transacciones y saldos?')) {
-                    onClearTransactions();
-                  }
-                }}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-extrabold rounded-xl bg-binance-red/20 hover:bg-binance-red/35 text-binance-red border border-binance-red/35 transition-all cursor-pointer"
-              >
-                <Trash2 className="w-4 h-4" />
-                Reiniciar Datos
-              </button>
-            )}
           </div>
         </div>
+
+        {/* P2P TRADE FORM (COMPRA / VENTA) */}
+        {showAddForm && onAddTransaction && (
+          <div className="bg-binance-black border border-binance-yellow/40 p-5 rounded-2xl space-y-4 shadow-xl mt-4">
+            <div className="flex justify-between items-center border-b border-binance-border pb-3">
+              <span className="text-xs font-black text-white uppercase flex items-center gap-2">
+                <DollarSign className="w-4 h-4 text-binance-yellow" /> Formulario Operación P2P
+              </span>
+              <span className="text-[10px] text-binance-gray font-bold">
+                Operador: <strong className="text-binance-yellow">{currentUser?.name || 'Vendedor'}</strong>
+              </span>
+            </div>
+
+            {formSuccess && (
+              <div className="p-3 bg-binance-green/20 border border-binance-green/40 text-binance-green rounded-xl text-xs font-bold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4" /> {formSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateTrade} className="space-y-4 text-xs">
+              {/* Type Toggle */}
+              <div className="grid grid-cols-2 gap-2 bg-binance-card p-1 rounded-xl border border-binance-border max-w-xs">
+                <button
+                  type="button"
+                  onClick={() => setTradeType('compra')}
+                  className={`py-2 px-3 rounded-lg font-black uppercase text-xs transition-all cursor-pointer ${
+                    tradeType === 'compra' ? 'bg-binance-red text-white' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  🔴 Compra (Entra Cripto, Sale Pesos)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTradeType('venta')}
+                  className={`py-2 px-3 rounded-lg font-black uppercase text-xs transition-all cursor-pointer ${
+                    tradeType === 'venta' ? 'bg-binance-green text-binance-black' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  🟢 Venta (Sale Cripto, Entran Pesos)
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                {/* Wallet Select */}
+                <div>
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                    Billetera Pesos ($ ARS) *
+                  </label>
+                  <select
+                    required
+                    value={selectedWalletId}
+                    onChange={e => setSelectedWalletId(e.target.value)}
+                    className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow font-bold cursor-pointer"
+                  >
+                    {wallets.map(w => (
+                      <option key={w.id} value={w.id} disabled={w.blocked}>
+                        {w.name} {w.blocked ? '🔒 [BLOQUEADA]' : `($${w.saldoPesos.toLocaleString('es-AR')} ARS)`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Exchange Select */}
+                <div>
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                    Exchange Cripto *
+                  </label>
+                  <select
+                    required
+                    value={selectedExchangeId}
+                    onChange={e => setSelectedExchangeId(e.target.value)}
+                    className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow font-bold cursor-pointer"
+                  >
+                    {exchanges.map(ex => (
+                      <option key={ex.id} value={ex.id}>{ex.name} ({ex.balanceCrypto} USDT)</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Monto Pesos */}
+                <div>
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                    Monto en Pesos ($ ARS) *
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    placeholder="ej. 120000"
+                    value={totalPesosInput}
+                    onChange={e => setTotalPesosInput(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-amber-400 font-extrabold outline-hidden focus:border-binance-yellow font-mono"
+                  />
+                </div>
+
+                {/* Cantidad Cripto */}
+                <div>
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                    Cantidad Cripto (USDT) *
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    placeholder="ej. 100"
+                    value={cryptoQtyInput}
+                    onChange={e => setCryptoQtyInput(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-binance-green font-extrabold outline-hidden focus:border-binance-yellow font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Auto calculated unit price banner */}
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-binance-card p-3 rounded-xl border border-binance-border">
+                <div className="text-xs">
+                  <span className="text-binance-gray">Precio Unitario Calculado: </span>
+                  <strong className="text-binance-yellow font-mono text-sm">{formatMoney(calculatedUnitPrice)} / {cryptoTicker}</strong>
+                </div>
+
+                <div className="flex gap-2 mt-2 sm:mt-0">
+                  <input
+                    type="text"
+                    placeholder="Cliente / Proveedor"
+                    value={clientOrSupplier}
+                    onChange={e => setClientOrSupplier(e.target.value)}
+                    className="px-3 py-1 bg-binance-black border border-binance-border rounded-lg text-white text-xs outline-hidden"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Observaciones / Notas"
+                    value={tradeNotes}
+                    onChange={e => setTradeNotes(e.target.value)}
+                    className="px-3 py-1 bg-binance-black border border-binance-border rounded-lg text-white text-xs outline-hidden"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className={`w-full py-3 text-binance-black font-black uppercase text-xs rounded-xl shadow-lg cursor-pointer tracking-wider ${
+                  tradeType === 'compra' ? 'bg-binance-red text-white hover:bg-binance-red/90' : 'bg-binance-green text-binance-black hover:bg-binance-green/90'
+                }`}
+              >
+                Procesar {tradeType.toUpperCase()} de {cryptoQtyInput || 0} {cryptoTicker} por {formatMoney(Number(totalPesosInput) || 0)}
+              </button>
+            </form>
+          </div>
+        )}
 
         {/* Aggregated Filtered Metrics Banner */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-binance-black rounded-xl border border-binance-border text-sm font-mono">
@@ -300,8 +473,7 @@ export default function Movimientos({
         </div>
 
         {/* Filter Inputs Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
-          {/* General Search */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-binance-gray" />
             <input
@@ -309,27 +481,37 @@ export default function Movimientos({
               placeholder="Buscar nota, cliente..."
               value={generalSearch}
               onChange={(e) => setGeneralSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden transition-all text-white"
+              className="w-full pl-9 pr-4 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:border-binance-yellow outline-hidden text-white"
             />
           </div>
 
-          {/* Timeframe */}
+          <select
+            value={vendorFilter}
+            onChange={(e) => setVendorFilter(e.target.value)}
+            className="w-full px-3 py-2 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-amber-400 font-bold"
+          >
+            <option value="all">👤 Todos los Vendedores</option>
+            {uniqueVendors.map(v => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+
           <select
             value={timeFilter}
             onChange={(e) => setTimeFilter(e.target.value as any)}
-            className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden cursor-pointer text-white"
+            className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-white font-bold"
           >
             <option value="all">Cualquier Fecha</option>
             <option value="today">Operaciones de Hoy</option>
             <option value="week">Última Semana</option>
             <option value="month">Último Mes</option>
+            <option value="custom">📅 Rango Fecha/Hora Personalizado</option>
           </select>
 
-          {/* Wallet Selection */}
           <select
             value={walletFilter}
             onChange={(e) => setWalletFilter(e.target.value)}
-            className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden cursor-pointer text-white"
+            className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-white"
           >
             <option value="all">Todas las Billeteras</option>
             {wallets.map(w => (
@@ -337,28 +519,21 @@ export default function Movimientos({
             ))}
           </select>
 
-          {/* Crypto Selection */}
           <select
             value={cryptoFilter}
             onChange={(e) => setCryptoFilter(e.target.value)}
-            className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden cursor-pointer text-white"
+            className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-white"
           >
             <option value="all">Todas las Criptos</option>
             <option value="USDT">USDT</option>
             <option value="BTC">BTC</option>
             <option value="ETH">ETH</option>
-            {uniqueCryptos.map(c => (
-              c !== 'USDT' && c !== 'BTC' && c !== 'ETH' && c !== 'ARS' ? (
-                <option key={c} value={c}>{c}</option>
-              ) : null
-            ))}
           </select>
 
-          {/* Transaction Type */}
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
-            className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden cursor-pointer text-white"
+            className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-white"
           >
             <option value="all">Cualquier Tipo</option>
             <option value="compra">Compras</option>
@@ -368,183 +543,90 @@ export default function Movimientos({
           </select>
         </div>
 
-        {/* Operator Search & Advanced filters Toggle */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
-          <div className="relative md:col-span-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-binance-gray" />
-            <input
-              type="text"
-              placeholder="Filtrar por Operador..."
-              value={operatorSearch}
-              onChange={(e) => setOperatorSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden transition-all text-white"
-            />
-          </div>
-          
-          <button
-            type="button"
-            onClick={() => setUseAdvancedTime(!useAdvancedTime)}
-            className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
-              useAdvancedTime
-                ? 'bg-binance-yellow/20 border-binance-yellow text-binance-yellow premium-glow-yellow'
-                : 'bg-binance-black hover:bg-binance-black/60 border-binance-border text-binance-gray hover:text-white'
-            }`}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            {useAdvancedTime ? 'Filtros Cronológicos: Activos' : 'Filtros Cronológicos (Fecha, Hora, Mes, Año)'}
-          </button>
-        </div>
-
-        {/* ADVANCED TIME FILTERS EXPANDABLE PANEL */}
-        {useAdvancedTime && (
-          <div className="bg-binance-black/40 border border-binance-border/60 rounded-xl p-4 space-y-4 transition-all duration-300">
-            <div className="flex justify-between items-center border-b border-binance-border/30 pb-2">
-              <span className="text-xs font-bold text-binance-yellow flex items-center gap-1.5 font-mono">
-                <Clock className="w-4 h-4" /> Búsqueda por Período y Horario Exacto
+        {/* Custom Date & Time Filter Panel */}
+        {timeFilter === 'custom' && (
+          <div className="bg-binance-black p-4 rounded-xl border border-binance-yellow/30 space-y-3 mt-2">
+            <div className="flex items-center justify-between text-xs border-b border-binance-border pb-2">
+              <span className="font-bold text-binance-yellow flex items-center gap-1.5 uppercase tracking-wider">
+                <Clock className="w-4 h-4" /> Filtrar por Rango de Fecha y Hora
               </span>
-              <span className="text-[10px] text-binance-gray font-mono">Los Filtros Rápidos de Tiempo quedan suspendidos mientras se use este panel</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-              {/* Date Start */}
-              <div className="space-y-1">
-                <label className="text-[9px] font-bold text-binance-gray uppercase tracking-wider block">Desde Fecha</label>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden text-white"
-                />
-              </div>
-
-              {/* Date End */}
-              <div className="space-y-1">
-                <label className="text-[9px] font-bold text-binance-gray uppercase tracking-wider block">Hasta Fecha</label>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden text-white"
-                />
-              </div>
-
-              {/* Year */}
-              <div className="space-y-1">
-                <label className="text-[9px] font-bold text-binance-gray uppercase tracking-wider block">Año</label>
-                <select
-                  value={selectedYear}
-                  onChange={(e) => setSelectedYear(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden cursor-pointer text-white"
-                >
-                  <option value="all">Cualquier Año</option>
-                  {uniqueYears.map(year => (
-                    <option key={year} value={year}>{year}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Month */}
-              <div className="space-y-1">
-                <label className="text-[9px] font-bold text-binance-gray uppercase tracking-wider block">Mes</label>
-                <select
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden cursor-pointer text-white"
-                >
-                  <option value="all">Cualquier Mes</option>
-                  {MONTHS.map(m => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Day of Month */}
-              <div className="space-y-1">
-                <label className="text-[9px] font-bold text-binance-gray uppercase tracking-wider block">Día del Mes</label>
-                <select
-                  value={selectedDayOfMonth}
-                  onChange={(e) => setSelectedDayOfMonth(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden cursor-pointer text-white"
-                >
-                  <option value="all">Cualquier Día (1-31)</option>
-                  {Array.from({ length: 31 }, (_, i) => (i + 1).toString()).map(d => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Day of Week */}
-              <div className="space-y-1">
-                <label className="text-[9px] font-bold text-binance-gray uppercase tracking-wider block">Día de la Semana</label>
-                <select
-                  value={selectedDayOfWeek}
-                  onChange={(e) => setSelectedDayOfWeek(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden cursor-pointer text-white"
-                >
-                  <option value="all">Cualquier Día (Lun-Dom)</option>
-                  {DAYS_OF_WEEK.map(d => (
-                    <option key={d.value} value={d.value}>{d.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Start Hour */}
-              <div className="space-y-1">
-                <label className="text-[9px] font-bold text-binance-gray uppercase tracking-wider block">Hora Inicio (Desde)</label>
-                <select
-                  value={startHour}
-                  onChange={(e) => setStartHour(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden cursor-pointer text-white font-mono"
-                >
-                  {Array.from({ length: 24 }, (_, i) => i.toString()).map(h => (
-                    <option key={h} value={h}>{h.padStart(2, '0')}:00 hs</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* End Hour */}
-              <div className="space-y-1">
-                <label className="text-[9px] font-bold text-binance-gray uppercase tracking-wider block">Hora Fin (Hasta)</label>
-                <select
-                  value={endHour}
-                  onChange={(e) => setEndHour(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-binance-black border border-binance-border rounded-xl text-xs focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow outline-hidden cursor-pointer text-white font-mono"
-                >
-                  {Array.from({ length: 24 }, (_, i) => i.toString()).map(h => (
-                    <option key={h} value={h}>{h.padStart(2, '0')}:59 hs</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex justify-between items-center pt-2 border-t border-binance-border/30">
-              <span className="text-[10px] text-binance-gray font-mono italic">
-                * Filtro aplicado en tiempo real
-              </span>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => {
-                    setStartDate('');
-                    setEndDate('');
-                    setSelectedYear('all');
-                    setSelectedMonth('all');
-                    setSelectedDayOfMonth('all');
-                    setSelectedDayOfWeek('all');
-                    setStartHour('0');
-                    setEndHour('23');
+                    const today = new Date().toISOString().split('T')[0];
+                    setCustomStartDate(today);
+                    setCustomStartTime('00:00');
+                    setCustomEndDate(today);
+                    setCustomEndTime('23:59');
                   }}
-                  className="px-3 py-1.5 bg-binance-black hover:bg-binance-black/85 border border-binance-border text-[11px] text-binance-gray hover:text-white font-bold rounded-lg transition-all cursor-pointer"
+                  className="text-[11px] text-binance-yellow hover:underline font-bold cursor-pointer"
                 >
-                  Limpiar Filtros
+                  Hoy Completo
                 </button>
+                <span className="text-binance-gray">|</span>
                 <button
                   type="button"
-                  onClick={() => setUseAdvancedTime(false)}
-                  className="px-3 py-1.5 bg-binance-yellow hover:bg-binance-yellow/90 text-binance-black text-[11px] font-extrabold rounded-lg transition-all cursor-pointer"
+                  onClick={() => {
+                    setCustomStartDate('');
+                    setCustomStartTime('');
+                    setCustomEndDate('');
+                    setCustomEndTime('');
+                  }}
+                  className="text-[11px] text-binance-gray hover:text-white font-bold cursor-pointer"
                 >
-                  Usar Filtros Rápidos
+                  Limpiar Filtro
                 </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div>
+                <label className="block text-binance-gray text-[10px] font-bold uppercase mb-1">
+                  Fecha Desde
+                </label>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-binance-gray text-[10px] font-bold uppercase mb-1">
+                  Hora Desde
+                </label>
+                <input
+                  type="time"
+                  value={customStartTime}
+                  onChange={(e) => setCustomStartTime(e.target.value)}
+                  className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-binance-gray text-[10px] font-bold uppercase mb-1">
+                  Fecha Hasta
+                </label>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-binance-gray text-[10px] font-bold uppercase mb-1">
+                  Hora Hasta
+                </label>
+                <input
+                  type="time"
+                  value={customEndTime}
+                  onChange={(e) => setCustomEndTime(e.target.value)}
+                  className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow font-mono"
+                />
               </div>
             </div>
           </div>
@@ -573,69 +655,46 @@ export default function Movimientos({
                   <th className="px-6 py-4">Operador & Detalle</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-binance-border/40">
+              <tbody className="divide-y divide-binance-border/40 font-mono">
                 {filteredTxs.map((t, idx) => (
                   <tr key={t.id || idx} className="hover:bg-binance-black/40 transition-colors">
-                    {/* Timestamp */}
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="font-bold text-white">{t.dateString}</div>
-                      <div className="text-binance-gray font-mono text-[10px] mt-0.5">{t.timeString}</div>
+                      <div className="text-binance-gray text-[10px] mt-0.5">{t.timeString}</div>
                     </td>
 
-                    {/* Operation Type badge */}
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold uppercase ${
                         t.type === 'compra' ? 'bg-binance-red/10 text-binance-red border border-binance-red/25' :
                         t.type === 'venta' ? 'bg-binance-green/10 text-binance-green border border-binance-green/25' :
-                        t.type === 'ingreso_fondos' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/25' :
-                        'bg-binance-black text-white border border-binance-border'
+                        'bg-blue-500/10 text-blue-400 border border-blue-500/25'
                       }`}>
                         {t.type === 'compra' && <ArrowDownLeft className="w-3.5 h-3.5" />}
                         {t.type === 'venta' && <ArrowUpRight className="w-3.5 h-3.5" />}
-                        {t.type === 'ingreso_fondos' && <span className="text-blue-400 font-bold">+</span>}
-                        {t.type === 'egreso_fondos' && <span className="text-binance-gray font-bold">-</span>}
-                        
-                        {t.type === 'compra' ? 'Compra' :
-                         t.type === 'venta' ? 'Venta' :
-                         t.type === 'ingreso_fondos' ? 'Ingreso' : 'Egreso'}
+                        {t.type.toUpperCase()}
                       </span>
                     </td>
 
-                    {/* Wallet Name */}
-                    <td className="px-6 py-4 whitespace-nowrap font-semibold text-white">
-                      <div className="flex items-center gap-1.5">
-                        <WalletIcon className="w-3.5 h-3.5 text-binance-yellow" />
-                        {t.walletName}
-                      </div>
+                    <td className="px-6 py-4 font-semibold text-white">
+                      {t.walletName}
                     </td>
 
-                    {/* Crypto ticker */}
-                    <td className="px-6 py-4 whitespace-nowrap font-bold text-white font-mono">
+                    <td className="px-6 py-4 font-bold text-white">
                       {t.crypto}
                     </td>
 
-                    {/* Quantity and Unit Price */}
-                    <td className="px-6 py-4 text-right whitespace-nowrap">
-                      {t.type !== 'ingreso_fondos' && t.type !== 'egreso_fondos' ? (
-                        <>
-                          <div className="font-bold text-white font-mono">{t.quantity.toLocaleString()} {t.crypto}</div>
-                          <div className="text-binance-gray mt-0.5 font-mono text-[10px]">@ {formatMoney(t.unitPrice)}</div>
-                        </>
-                      ) : (
-                        <span className="text-binance-gray italic">-</span>
-                      )}
+                    <td className="px-6 py-4 text-right">
+                      <div className="font-bold text-white">{t.quantity.toLocaleString()} {t.crypto}</div>
+                      <div className="text-binance-gray text-[10px]">@ {formatMoney(t.unitPrice)}</div>
                     </td>
 
-                    {/* Total Pesos cost */}
-                    <td className="px-6 py-4 text-right whitespace-nowrap font-extrabold font-mono">
-                      <span className={t.type === 'compra' || t.type === 'egreso_fondos' ? 'text-binance-red' : 'text-binance-green'}>
-                        {t.type === 'compra' || t.type === 'egreso_fondos' ? '-' : '+'}
-                        {formatMoney(t.totalPesos)}
+                    <td className="px-6 py-4 text-right font-black">
+                      <span className={t.type === 'compra' ? 'text-binance-red' : 'text-binance-green'}>
+                        {t.type === 'compra' ? '-' : '+'}{formatMoney(t.totalPesos)}
                       </span>
                     </td>
 
-                    {/* Realized profit */}
-                    <td className="px-6 py-4 text-right whitespace-nowrap font-extrabold font-mono">
+                    <td className="px-6 py-4 text-right font-black">
                       {t.type === 'venta' && t.gain !== undefined ? (
                         <span className="text-binance-green">+{formatMoney(t.gain)}</span>
                       ) : (
@@ -643,20 +702,9 @@ export default function Movimientos({
                       )}
                     </td>
 
-                    {/* Operator and client/provider */}
                     <td className="px-6 py-4 text-binance-gray space-y-1">
-                      <div className="font-bold text-white">
-                        {t.operator}
-                      </div>
-                      {t.supplier && (
-                        <div className="text-[10px] text-binance-yellow">Proveedor: {t.supplier}</div>
-                      )}
-                      {t.client && (
-                        <div className="text-[10px] text-binance-green">Comprador: {t.client}</div>
-                      )}
-                      {t.notes && (
-                        <div className="text-[10px] text-binance-gray italic font-mono">"{t.notes}"</div>
-                      )}
+                      <div className="font-bold text-white">{t.operator}</div>
+                      {t.notes && <div className="text-[10px] text-binance-gray italic">"{t.notes}"</div>}
                     </td>
                   </tr>
                 ))}

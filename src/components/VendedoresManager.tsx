@@ -47,6 +47,7 @@ export default function VendedoresManager({
       name: name.trim(),
       password: password,
       role,
+      organization_id: currentUser?.organization_id || 'org-1',
     };
 
     onAddUser(newUser);

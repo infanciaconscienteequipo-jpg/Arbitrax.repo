@@ -3,23 +3,88 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AppState, Wallet, Transaction, P2PArbitrage, Shift, User } from '../types';
+import { AppState, Wallet, Transaction, P2PArbitrage, Shift, User, Organization, ExchangeAccount } from '../types';
+
+export const DEFAULT_ORGANIZATIONS: Organization[] = [
+  {
+    id: 'org-1',
+    name: 'ArbitraX Capital Partners S.A.',
+    taxId: '30-71628391-4',
+    country: 'Argentina',
+    status: 'active',
+    plan: 'Enterprise Pro',
+    maxUsers: 10,
+    monthlyFee: 250,
+    createdAt: '2026-01-15',
+    subscriptionExpiresAt: '2026-12-31',
+    featureFlags: { p2pCalculator: true, shiftClosing: true, advancedReports: true, customCryptos: true, auditLogs: true }
+  },
+  {
+    id: 'org-2',
+    name: 'CriptoGlobal P2P SRL',
+    taxId: '30-88492019-2',
+    country: 'Argentina',
+    status: 'active',
+    plan: 'Pro SaaS',
+    maxUsers: 5,
+    monthlyFee: 120,
+    createdAt: '2026-02-01',
+    subscriptionExpiresAt: '2026-08-01',
+    featureFlags: { p2pCalculator: true, shiftClosing: true, advancedReports: false, customCryptos: true, auditLogs: true }
+  }
+];
 
 export const DEFAULT_WALLETS: Wallet[] = [
-  { id: 'mercado_pago', name: 'Mercado Pago', saldoPesos: 1250000, saldoUsdt: 300, color: 'blue', providerType: 'Fintech' },
-  { id: 'lemon', name: 'Lemon Cash', saldoPesos: 450000, saldoUsdt: 120, color: 'green', providerType: 'Crypto Card' },
-  { id: 'naranja_x', name: 'Naranja X', saldoPesos: 310000, saldoUsdt: 50, color: 'orange', providerType: 'Fintech' },
-  { id: 'astro_pay', name: 'AstroPay', saldoPesos: 180000, saldoUsdt: 80, color: 'purple', providerType: 'International Wallet' },
-  { id: 'brubank', name: 'Brubank', saldoPesos: 600000, saldoUsdt: 210, color: 'teal', providerType: 'Digital Bank' },
-  { id: 'personal_pay', name: 'Personal Pay', saldoPesos: 250000, saldoUsdt: 100, color: 'cyan', providerType: 'Fintech' },
-  { id: 'other', name: 'Otra Billetera', saldoPesos: 50000, saldoUsdt: 0, color: 'gray', providerType: 'Otro' },
+  { id: 'mercado_pago', name: 'Mercado Pago', saldoPesos: 1250000, saldoUsdt: 300, color: 'blue', providerType: 'Fintech', titular: 'Roberto Gómez', vendorId: 'u-2', vendorName: 'Roberto Gómez', organization_id: 'org-1', limitARS: 3000000, blocked: false },
+  { id: 'lemon', name: 'Lemon Cash', saldoPesos: 450000, saldoUsdt: 120, color: 'green', providerType: 'Crypto Card', titular: 'Roberto Gómez', vendorId: 'u-2', vendorName: 'Roberto Gómez', organization_id: 'org-1', limitARS: 2000000, blocked: false },
+  { id: 'naranja_x', name: 'Naranja X', saldoPesos: 310000, saldoUsdt: 50, color: 'orange', providerType: 'Fintech', titular: 'Carla Benítez', vendorId: 'u-3', vendorName: 'Carla Benítez', organization_id: 'org-1', limitARS: 1500000, blocked: false },
+  { id: 'brubank', name: 'Brubank', saldoPesos: 600000, saldoUsdt: 210, color: 'teal', providerType: 'Digital Bank', titular: 'Carla Benítez', vendorId: 'u-3', vendorName: 'Carla Benítez', organization_id: 'org-1', limitARS: 5000000, blocked: false },
+];
+
+export const DEFAULT_EXCHANGES: ExchangeAccount[] = [
+  { id: 'binance-main', name: 'Binance P2P', balanceCrypto: 1450, vendorId: 'u-2', vendorName: 'Roberto Gómez', organization_id: 'org-1' },
+  { id: 'bybit-main', name: 'Bybit Official', balanceCrypto: 820, vendorId: 'u-2', vendorName: 'Roberto Gómez', organization_id: 'org-1' },
+  { id: 'lemon-ex', name: 'Lemon Exchange', balanceCrypto: 310, vendorId: 'u-3', vendorName: 'Carla Benítez', organization_id: 'org-1' },
+  { id: 'okx-main', name: 'OKX Pro', balanceCrypto: 600, vendorId: 'u-3', vendorName: 'Carla Benítez', organization_id: 'org-1' },
 ];
 
 export const DEFAULT_USERS: User[] = [
-  { username: 'demo chip', name: 'demo chip', password: '123', role: 'vendedor' },
-  { username: 'martin_p2p', name: 'Martin P2P', password: '123', role: 'vendedor' },
-  { username: 'sofia_crypto', name: 'Sofia Crypto', password: '123', role: 'vendedor' },
-  { username: 'admin', name: 'Administrador', password: 'admin', role: 'admin' },
+  {
+    id: 'u-super-1',
+    email: 'arbitrax19@gmail.com',
+    username: 'superadmin',
+    name: 'Super Admin ArbitraX',
+    password: 'Arbitrax.2006',
+    role: 'SUPER_ADMIN',
+    organization_id: null
+  },
+  {
+    id: 'u-1',
+    email: 'admiarbitrax1@gmail.com',
+    username: 'admin',
+    name: 'Administrador Principal',
+    password: 'Arbitrax.2006',
+    role: 'ADMIN',
+    organization_id: 'org-1'
+  },
+  {
+    id: 'u-2',
+    email: 'roberto.g@arbitrax.com',
+    username: 'roberto.g',
+    name: 'Roberto Gómez (Vendedor)',
+    password: 'Arbitrax.2006',
+    role: 'VENDEDOR',
+    organization_id: 'org-1'
+  },
+  {
+    id: 'u-3',
+    email: 'carla.b@arbitrax.com',
+    username: 'carla.b',
+    name: 'Carla Benítez (Vendedor)',
+    password: 'Arbitrax.2006',
+    role: 'VENDEDOR',
+    organization_id: 'org-1'
+  },
 ];
 
 const INITIAL_TRANSACTIONS: Transaction[] = [
@@ -117,12 +182,15 @@ const LOCAL_STORAGE_KEY = 'crypto_p2p_app_state_v1';
 export function getInitialState(): AppState {
   if (typeof window === 'undefined') {
     return {
+      organizations: DEFAULT_ORGANIZATIONS,
       wallets: DEFAULT_WALLETS,
+      exchanges: DEFAULT_EXCHANGES,
+      incomeExpenses: [],
       transactions: INITIAL_TRANSACTIONS,
       p2pCalcs: INITIAL_P2P,
       shifts: INITIAL_SHIFTS,
       activeShiftId: null,
-      currentOperator: 'demo chip',
+      currentOperator: 'Roberto Gómez',
       users: DEFAULT_USERS,
       currentUser: DEFAULT_USERS[0],
     };
@@ -134,11 +202,57 @@ export function getInitialState(): AppState {
       const parsed = JSON.parse(saved);
       // Ensure basic keys are intact
       if (parsed.wallets && parsed.transactions) {
+        if (!parsed.exchanges || parsed.exchanges.length === 0) {
+          parsed.exchanges = DEFAULT_EXCHANGES;
+        }
+        if (!parsed.incomeExpenses) {
+          parsed.incomeExpenses = [];
+        }
+
+        if (!parsed.organizations || parsed.organizations.length === 0) {
+          parsed.organizations = DEFAULT_ORGANIZATIONS;
+        } else {
+          DEFAULT_ORGANIZATIONS.forEach(defOrg => {
+            if (!parsed.organizations.some((o: Organization) => o.id === defOrg.id)) {
+              parsed.organizations.push(defOrg);
+            }
+          });
+        }
+
         if (!parsed.users || parsed.users.length === 0) {
           parsed.users = DEFAULT_USERS;
+        } else {
+          // Merge default users (Super Admin, Admins) if not present
+          DEFAULT_USERS.forEach(defUser => {
+            const index = parsed.users.findIndex((u: User) =>
+              u.id === defUser.id ||
+              (u.email && defUser.email && u.email.toLowerCase() === defUser.email.toLowerCase()) ||
+              (u.username && defUser.username && u.username.toLowerCase() === defUser.username.toLowerCase())
+            );
+            if (index === -1) {
+              parsed.users.push(defUser);
+            } else {
+              // Ensure role and password match default if updated
+              parsed.users[index] = {
+                ...parsed.users[index],
+                email: parsed.users[index].email || defUser.email,
+                role: defUser.role,
+                password: parsed.users[index].password || defUser.password,
+              };
+            }
+          });
         }
-        if (parsed.currentUser === undefined) {
+
+        if (!parsed.currentUser) {
           parsed.currentUser = parsed.users[0] || DEFAULT_USERS[0];
+        } else {
+          // Sync current user role/email
+          const currentInList = parsed.users.find((u: User) => u.username === parsed.currentUser.username || u.email === parsed.currentUser.email);
+          if (currentInList) {
+            parsed.currentUser = currentInList;
+          } else {
+            parsed.currentUser = parsed.users[0] || DEFAULT_USERS[0];
+          }
         }
         return parsed;
       }
@@ -149,12 +263,15 @@ export function getInitialState(): AppState {
 
   // Fallback to defaults
   const state: AppState = {
+    organizations: DEFAULT_ORGANIZATIONS,
     wallets: DEFAULT_WALLETS,
+    exchanges: DEFAULT_EXCHANGES,
+    incomeExpenses: [],
     transactions: INITIAL_TRANSACTIONS,
     p2pCalcs: INITIAL_P2P,
     shifts: INITIAL_SHIFTS,
     activeShiftId: null,
-    currentOperator: 'demo chip',
+    currentOperator: 'Roberto Gómez',
     users: DEFAULT_USERS,
     currentUser: DEFAULT_USERS[0],
   };
@@ -178,7 +295,6 @@ export function saveState(state: AppState): void {
 export function calculateAverageBuyPrice(transactions: Transaction[], crypto: string): number {
   const buys = transactions.filter(t => t.type === 'compra' && t.crypto.toUpperCase() === crypto.toUpperCase());
   if (buys.length === 0) {
-    // Return a default realistic average if no buys are logged yet (e.g., around 1220 for USDT)
     return crypto.toUpperCase() === 'USDT' ? 1220 : 0;
   }
 
@@ -197,12 +313,15 @@ export function calculateAverageBuyPrice(transactions: Transaction[], crypto: st
  */
 export function clearAllData(): AppState {
   const freshState: AppState = {
+    organizations: DEFAULT_ORGANIZATIONS,
     wallets: DEFAULT_WALLETS.map(w => ({ ...w })),
+    exchanges: DEFAULT_EXCHANGES.map(e => ({ ...e })),
+    incomeExpenses: [],
     transactions: [],
     p2pCalcs: [],
     shifts: [],
     activeShiftId: null,
-    currentOperator: 'demo chip',
+    currentOperator: 'Roberto Gómez',
     users: DEFAULT_USERS,
     currentUser: DEFAULT_USERS[0],
   };

@@ -4,31 +4,45 @@
  */
 
 import React, { useState } from 'react';
-import { Wallet, Transaction } from '../types';
-import { Wallet as WalletIcon, Plus, Minus, ArrowUpRight, ArrowDownLeft, TrendingUp, DollarSign, WalletCards, Sparkles, CheckCircle2, AlertTriangle, Clock, SlidersHorizontal, Filter, Calendar } from 'lucide-react';
+import { Wallet, Transaction, User } from '../types';
+import { Wallet as WalletIcon, Plus, Minus, ArrowUpRight, ArrowDownLeft, TrendingUp, DollarSign, WalletCards, Sparkles, CheckCircle2, AlertTriangle, Clock, SlidersHorizontal, Filter, Calendar, Lock, Unlock, Edit3, Save, X, Paperclip, FileText, Upload } from 'lucide-react';
 
 interface BilleterasProps {
   wallets: Wallet[];
   transactions: Transaction[];
+  users?: User[];
   activeShiftId: string | null;
   onFundWallet: (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => void;
   onAddWallet: (name: string, titular: string, initialBalance: number) => void;
+  onUpdateWallet?: (walletId: string, updates: Partial<Wallet>) => void;
 }
 
 export default function Billeteras({
   wallets,
   transactions,
+  users = [],
   activeShiftId,
   onFundWallet,
   onAddWallet,
+  onUpdateWallet,
 }: BilleterasProps) {
   const [selectedWalletId, setSelectedWalletId] = useState('');
   const [amountInput, setAmountInput] = useState<number | ''>('');
   const [operationType, setOperationType] = useState<'ingreso_fondos' | 'egreso_fondos'>('ingreso_fondos');
   const [notes, setNotes] = useState('');
+  const [comprobanteFile, setComprobanteFile] = useState<{ name: string; url?: string } | null>(null);
   
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Vendedor Filter State
+  const [vendorFilter, setVendorFilter] = useState('all');
+
+  // Editing Wallet Balance & Limit state
+  const [editingWalletId, setEditingWalletId] = useState<string | null>(null);
+  const [editPesos, setEditPesos] = useState<number | ''>('');
+  const [editLimit, setEditLimit] = useState<number | ''>('');
+  const [editTitular, setEditTitular] = useState<string>('');
 
   // New wallet state variables
   const [newWalletName, setNewWalletName] = useState('');
@@ -88,10 +102,36 @@ export default function Billeteras({
     uniqueYears.push(new Date().getFullYear().toString());
   }
 
+  // Extract unique vendors for dropdown
+  const uniqueVendors = Array.from(
+    new Set([
+      ...users.map(u => u.name || u.username),
+      ...wallets.map(w => w.titular).filter(Boolean),
+      ...transactions.map(t => t.operator).filter(Boolean),
+    ])
+  ).filter(Boolean);
+
+  // Filter wallets by vendor/titular if selected
+  const filteredWallets = wallets.filter(w => {
+    if (vendorFilter === 'all') return true;
+    const vLower = vendorFilter.toLowerCase();
+    const matchesTitular = w.titular?.toLowerCase().includes(vLower);
+    const matchesName = w.name?.toLowerCase().includes(vLower);
+    return matchesTitular || matchesName;
+  });
+
   // Filtered transactions for bottom history table
   const filteredHistTxs = transactions.filter(t => {
     const txDate = new Date(t.timestamp);
     const now = new Date();
+
+    // 0. Vendor Filter
+    if (vendorFilter !== 'all') {
+      const vLower = vendorFilter.toLowerCase();
+      if (!t.operator.toLowerCase().includes(vLower) && !t.walletName.toLowerCase().includes(vLower)) {
+        return false;
+      }
+    }
 
     // 1. Time / Chronological Filtering
     if (!histUseAdvanced) {
@@ -161,6 +201,41 @@ export default function Billeteras({
     }
   }, [wallets, selectedWalletId]);
 
+  const handleStartEdit = (w: Wallet) => {
+    setEditingWalletId(w.id);
+    setEditPesos(w.saldoPesos);
+    setEditLimit(w.limitARS || 3000000);
+    setEditTitular(w.titular || '');
+  };
+
+  const handleSaveEdit = (walletId: string) => {
+    if (!onUpdateWallet) return;
+    const newPesos = typeof editPesos === 'number' ? Math.max(0, editPesos) : 0;
+    const newLimit = typeof editLimit === 'number' ? Math.max(0, editLimit) : 0;
+
+    onUpdateWallet(walletId, {
+      saldoPesos: newPesos,
+      limitARS: newLimit,
+      titular: editTitular.trim(),
+    });
+
+    setEditingWalletId(null);
+    setSuccessMsg('✅ Saldo, titular y límite de la billetera actualizados exitosamente.');
+    setTimeout(() => setSuccessMsg(''), 4000);
+  };
+
+  const handleToggleBlock = (w: Wallet) => {
+    if (!onUpdateWallet) return;
+    const newBlockedState = !w.blocked;
+    onUpdateWallet(w.id, { blocked: newBlockedState });
+    setSuccessMsg(
+      newBlockedState
+        ? `🔒 Billetera "${w.name}" bloqueada para operaciones.`
+        : `🔓 Billetera "${w.name}" desbloqueada exitosamente.`
+    );
+    setTimeout(() => setSuccessMsg(''), 4000);
+  };
+
   const handleCreateWalletSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -220,6 +295,11 @@ export default function Billeteras({
       return;
     }
 
+    if (selectedWalletObj?.blocked) {
+      setErrorMsg(`⛔ La billetera "${selectedWalletObj.name}" está BLOQUEADA. Desbloquéela en su tarjeta para operar.`);
+      return;
+    }
+
     if (typeof amountInput !== 'number' || amountInput <= 0) {
       setErrorMsg('El monto debe ser un número positivo.');
       return;
@@ -232,16 +312,22 @@ export default function Billeteras({
 
     setErrorMsg('');
     
+    let baseNote = notes.trim() || `${operationType === 'ingreso_fondos' ? 'Ingreso' : 'Egreso'} manual de fondos`;
+    if (comprobanteFile) {
+      baseNote += ` | Comprobante: ${comprobanteFile.name}`;
+    }
+
     onFundWallet(
       selectedWalletId, 
       amountInput, 
       operationType, 
-      notes.trim() || `${operationType === 'ingreso_fondos' ? 'Ingreso' : 'Egreso'} manual de fondos`
+      baseNote
     );
 
     setSuccessMsg(`✅ Operación registrada con éxito. Se actualizó el saldo de ${selectedWalletObj?.name}.`);
     setAmountInput('');
     setNotes('');
+    setComprobanteFile(null);
 
     setTimeout(() => setSuccessMsg(''), 5000);
   };
@@ -263,60 +349,74 @@ export default function Billeteras({
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Wallet Cards Portfolio Grid */}
       <div className="lg:col-span-2 space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <h2 className="text-xl font-bold text-white flex items-center gap-2 font-display">
             <WalletCards className="w-5 h-5 text-binance-yellow" />
             Billeteras y Liquidez
           </h2>
-          <span className="text-[10px] text-binance-gray font-mono uppercase tracking-wider">
-            Saldos automatizados transaccionalmente
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-binance-gray">Vendedor / Titular:</span>
+            <select
+              value={vendorFilter}
+              onChange={(e) => setVendorFilter(e.target.value)}
+              className="px-3 py-1.5 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-amber-400 font-bold"
+            >
+              <option value="all">👤 Todos los Vendedores</option>
+              {uniqueVendors.map(v => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        {/* Global Wallet Portfolio Summary Card */}
+        {/* Global Wallet Portfolio Summary Card - Pesos Focus */}
         <div className="bg-binance-black border border-binance-border rounded-2xl p-6 shadow-md relative overflow-hidden">
           <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-48 h-48 bg-binance-yellow/5 rounded-full blur-2xl"></div>
           
-          <div className="flex justify-between items-center mb-6">
+          <div className="flex justify-between items-center mb-4">
             <span className="text-[11px] font-bold uppercase tracking-wider text-binance-yellow flex items-center gap-1.5 font-mono">
-              <Sparkles className="w-4 h-4 text-binance-yellow" /> Liquidez Consolidada P2P
+              <Sparkles className="w-4 h-4 text-binance-yellow" /> Liquidez Consolidada en Pesos (ARS)
             </span>
             <span className="text-[9px] bg-binance-card text-binance-gray border border-binance-border px-2.5 py-0.5 rounded font-mono uppercase">
-              Suma de todas las cuentas
+              Total Billeteras FIAT
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-1">
-              <span className="text-xs text-binance-gray uppercase tracking-wider font-bold">Total en Pesos (ARS)</span>
-              <span className="text-3xl font-extrabold block text-white tracking-tight font-mono">
-                {formatMoney(totalPesos)}
-              </span>
-            </div>
-            <div className="space-y-1">
-              <span className="text-xs text-binance-gray uppercase tracking-wider font-bold">Total en Cripto (USDT)</span>
-              <span className="text-3xl font-extrabold block text-binance-green tracking-tight font-mono">
-                {totalUsdt.toLocaleString()} <span className="text-lg font-bold">USDT</span>
-              </span>
-            </div>
+          <div className="space-y-1">
+            <span className="text-xs text-binance-gray uppercase tracking-wider font-bold block">Total Stock Pesos Disponibles</span>
+            <span className="text-4xl font-extrabold block text-white tracking-tight font-mono">
+              {formatMoney(totalPesos)}
+            </span>
           </div>
         </div>
 
         {/* Wallet Cards List */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {wallets.map((w) => {
+          {filteredWallets.map((w) => {
             const pesosPercentage = totalPesos > 0 ? (w.saldoPesos / totalPesos) * 100 : 0;
-            const usdtPercentage = totalUsdt > 0 ? (w.saldoUsdt / totalUsdt) * 100 : 0;
+            const limitVal = w.limitARS || 3000000;
+            const limitPercentage = Math.min(100, (w.saldoPesos / limitVal) * 100);
+            const isNearOrOverLimit = limitPercentage >= 80;
+            const isEditing = editingWalletId === w.id;
 
             return (
               <div
                 key={w.id}
-                className="bg-binance-card rounded-xl border border-binance-border p-5 shadow-xs space-y-4 hover:border-binance-gray/30 transition-all"
+                className={`bg-binance-card rounded-xl border p-5 shadow-xs space-y-4 transition-all ${
+                  w.blocked
+                    ? 'border-binance-red/50 bg-binance-red/5'
+                    : isNearOrOverLimit
+                    ? 'border-amber-500/50 bg-amber-500/5'
+                    : 'border-binance-border hover:border-binance-gray/30'
+                }`}
               >
                 {/* Wallet header */}
                 <div className="flex justify-between items-start">
                   <div>
-                    <h3 className="font-extrabold text-white text-base">{w.name}</h3>
+                    <h3 className="font-extrabold text-white text-base flex items-center gap-2">
+                      {w.name}
+                      {w.blocked && <Lock className="w-4 h-4 text-binance-red" />}
+                    </h3>
                     {w.titular && (
                       <span className="text-[11px] text-binance-yellow font-bold block mt-0.5 font-mono">
                         Titular: {w.titular}
@@ -324,45 +424,164 @@ export default function Billeteras({
                     )}
                     <span className="text-[10px] text-binance-gray uppercase tracking-wider block mt-0.5 font-mono">{w.providerType}</span>
                   </div>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-binance-black text-binance-yellow border border-binance-border font-mono">
-                    Activa
-                  </span>
-                </div>
 
-                {/* Balances detail */}
-                <div className="space-y-2 pt-1 border-t border-binance-border/40">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-binance-gray">Saldo Pesos:</span>
-                    <span className="font-bold text-white font-mono">
-                      {formatMoney(w.saldoPesos)}
+                  {/* Status Badge */}
+                  {w.blocked ? (
+                    <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-binance-red/20 text-binance-red border border-binance-red/40 font-mono flex items-center gap-1.5 animate-pulse">
+                      <Lock className="w-3 h-3" /> BLOQUEADA
                     </span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-binance-gray">Saldo USDT:</span>
-                    <span className="font-bold text-binance-green font-mono">
-                      {w.saldoUsdt.toLocaleString()} USDT
+                  ) : isNearOrOverLimit ? (
+                    <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 font-mono flex items-center gap-1.5">
+                      <AlertTriangle className="w-3 h-3" /> 80%+ OCUPADA
                     </span>
-                  </div>
+                  ) : (
+                    <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-binance-green/20 text-binance-green border border-binance-green/30 font-mono flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3 h-3" /> ACTIVA
+                    </span>
+                  )}
                 </div>
 
-                {/* Micro allocation bar graphs */}
-                <div className="space-y-2 pt-1">
-                  <div className="text-[10px] text-binance-gray flex justify-between font-mono">
-                    <span>% Líquido Pesos</span>
-                    <span className="font-bold text-white">{pesosPercentage.toFixed(1)}%</span>
-                  </div>
-                  <div className="w-full bg-binance-black h-1.5 rounded-full overflow-hidden border border-binance-border/40">
-                    <div className="h-full bg-binance-yellow" style={{ width: `${pesosPercentage}%` }}></div>
-                  </div>
+                {/* Inline Editing Form or Balances View */}
+                {isEditing ? (
+                  <div className="bg-binance-black p-3.5 rounded-xl border border-binance-yellow/40 space-y-3 mt-2">
+                    <div className="flex justify-between items-center text-xs font-bold text-binance-yellow border-b border-binance-border pb-1.5">
+                      <span className="flex items-center gap-1"><Edit3 className="w-3.5 h-3.5" /> Modificar Saldo y Límite</span>
+                      <button onClick={() => setEditingWalletId(null)} className="text-binance-gray hover:text-white cursor-pointer">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
 
-                  <div className="text-[10px] text-binance-gray flex justify-between mt-1 font-mono">
-                    <span>% Líquido USDT</span>
-                    <span className="font-bold text-white">{usdtPercentage.toFixed(1)}%</span>
+                    <div className="space-y-2 text-xs">
+                      <div>
+                        <label className="text-[10px] text-binance-gray font-bold uppercase block mb-1">Saldo Pesos ($ ARS)</label>
+                        <input
+                          type="number"
+                          step="any"
+                          value={editPesos}
+                          onChange={(e) => setEditPesos(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                          className="w-full px-2.5 py-1.5 bg-binance-card border border-binance-border rounded-lg text-white font-mono text-xs focus:border-binance-yellow outline-hidden"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-binance-gray font-bold uppercase block mb-1">Límite Operación ARS</label>
+                          <input
+                            type="number"
+                            step="any"
+                            value={editLimit}
+                            onChange={(e) => setEditLimit(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                            className="w-full px-2.5 py-1.5 bg-binance-card border border-binance-border rounded-lg text-white font-mono text-xs focus:border-binance-yellow outline-hidden"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-binance-gray font-bold uppercase block mb-1">Titular Cuenta</label>
+                          <input
+                            type="text"
+                            value={editTitular}
+                            onChange={(e) => setEditTitular(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-binance-card border border-binance-border rounded-lg text-white text-xs focus:border-binance-yellow outline-hidden"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        onClick={() => handleSaveEdit(w.id)}
+                        className="flex-1 py-1.5 px-3 bg-binance-yellow text-binance-black font-extrabold rounded-lg text-xs flex items-center justify-center gap-1 hover:bg-binance-yellow/90 cursor-pointer transition-all"
+                      >
+                        <Save className="w-3.5 h-3.5" /> Guardar
+                      </button>
+                      <button
+                        onClick={() => setEditingWalletId(null)}
+                        className="py-1.5 px-3 border border-binance-border text-binance-gray font-bold rounded-lg text-xs hover:text-white cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
                   </div>
-                  <div className="w-full bg-binance-black h-1.5 rounded-full overflow-hidden border border-binance-border/40">
-                    <div className="h-full bg-binance-green" style={{ width: `${usdtPercentage}%` }}></div>
-                  </div>
-                </div>
+                ) : (
+                  <>
+                    {/* Balances detail - Pesos only */}
+                    <div className="space-y-2 pt-1 border-t border-binance-border/40">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-binance-gray font-medium">Stock Pesos:</span>
+                        <span className="font-extrabold text-white font-mono text-base">
+                          {formatMoney(w.saldoPesos)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Limit progress bar & 80% indicator */}
+                    <div className="space-y-1.5 pt-1 border-t border-binance-border/30">
+                      <div className="text-[10px] text-binance-gray flex justify-between font-mono">
+                        <span>Ocupación de Límite ($ ARS)</span>
+                        <span className={`font-bold ${limitPercentage >= 100 ? 'text-binance-red' : limitPercentage >= 80 ? 'text-amber-400' : 'text-white'}`}>
+                          {limitPercentage.toFixed(1)}% ({formatMoney(w.saldoPesos)} / {formatMoney(limitVal)})
+                        </span>
+                      </div>
+                      <div className="w-full bg-binance-black h-2 rounded-full overflow-hidden border border-binance-border/40">
+                        <div
+                          className={`h-full transition-all ${
+                            limitPercentage >= 100
+                              ? 'bg-binance-red'
+                              : limitPercentage >= 80
+                              ? 'bg-amber-400'
+                              : 'bg-binance-yellow'
+                          }`}
+                          style={{ width: `${limitPercentage}%` }}
+                        />
+                      </div>
+                      {isNearOrOverLimit && (
+                        <p className="text-[10px] text-amber-400 font-bold flex items-center gap-1 mt-0.5">
+                          <AlertTriangle className="w-3 h-3 shrink-0" />
+                          Alerta: Ocupó el {limitPercentage.toFixed(0)}% del límite operativo.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Micro allocation bar graphs */}
+                    <div className="space-y-1.5 pt-1 text-[10px] text-binance-gray font-mono">
+                      <div className="flex justify-between">
+                        <span>% Participación Líquido ARS</span>
+                        <span className="font-bold text-white">{pesosPercentage.toFixed(1)}%</span>
+                      </div>
+                      <div className="w-full bg-binance-black h-1 rounded-full overflow-hidden">
+                        <div className="h-full bg-binance-yellow/60" style={{ width: `${pesosPercentage}%` }}></div>
+                      </div>
+                    </div>
+
+                    {/* Action controls (Edit Saldo/Limit & Lock/Unlock) */}
+                    <div className="flex items-center gap-2 pt-2 border-t border-binance-border/40">
+                      <button
+                        onClick={() => handleStartEdit(w)}
+                        className="flex-1 py-1.5 px-2.5 bg-binance-black hover:bg-binance-card border border-binance-border hover:border-binance-yellow/40 text-binance-yellow rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" /> Modificar
+                      </button>
+
+                      <button
+                        onClick={() => handleToggleBlock(w)}
+                        className={`flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border ${
+                          w.blocked
+                            ? 'bg-binance-green/20 hover:bg-binance-green/30 text-binance-green border-binance-green/40'
+                            : 'bg-binance-red/20 hover:bg-binance-red/30 text-binance-red border-binance-red/40'
+                        }`}
+                      >
+                        {w.blocked ? (
+                          <>
+                            <Unlock className="w-3.5 h-3.5" /> Desbloquear
+                          </>
+                        ) : (
+                          <>
+                            <Lock className="w-3.5 h-3.5" /> Bloquear
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             );
           })}
@@ -470,15 +689,22 @@ export default function Billeteras({
               <select
                 value={selectedWalletId}
                 onChange={(e) => setSelectedWalletId(e.target.value)}
-                className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden cursor-pointer"
+                className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden cursor-pointer font-medium"
               >
                 {wallets.map(w => (
                   <option key={w.id} value={w.id}>
-                    {w.name} — Saldo: {formatMoney(w.saldoPesos)}
+                    {w.name} {w.blocked ? '🔒 [BLOQUEADA]' : ''} — Saldo: {formatMoney(w.saldoPesos)}
                   </option>
                 ))}
               </select>
             </div>
+
+            {selectedWalletObj?.blocked && (
+              <div className="p-3 bg-binance-red/20 border border-binance-red/40 rounded-xl text-binance-red text-xs flex items-center gap-2 font-bold">
+                <Lock className="w-4 h-4 shrink-0 text-binance-red" />
+                <span>⛔ Esta billetera está <strong>BLOQUEADA</strong>. Para registrar depósitos o retiros debe desbloquearla primero en su tarjeta.</span>
+              </div>
+            )}
 
             {/* Type tabs toggle */}
             <div className="grid grid-cols-2 gap-2 bg-binance-black p-1 rounded-xl border border-binance-border">
@@ -527,7 +753,7 @@ export default function Billeteras({
             {/* Notes */}
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-binance-gray uppercase tracking-wider block">
-                Concepto / Comprobante / Origen
+                Concepto / Origen
               </label>
               <input
                 type="text"
@@ -536,6 +762,48 @@ export default function Billeteras({
                 onChange={(e) => setNotes(e.target.value)}
                 className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden text-white"
               />
+            </div>
+
+            {/* Attach Comprobante File */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-binance-gray uppercase tracking-wider block">
+                Adjuntar Comprobante de la Operación
+              </label>
+              {comprobanteFile ? (
+                <div className="flex items-center justify-between p-3 bg-binance-black border border-binance-green/50 rounded-xl text-xs text-white shadow-xs">
+                  <div className="flex items-center gap-2 truncate">
+                    <FileText className="w-4 h-4 text-binance-green shrink-0" />
+                    <div className="truncate">
+                      <span className="font-mono font-bold block truncate">{comprobanteFile.name}</span>
+                      <span className="text-[10px] text-binance-green font-medium block">✓ Comprobante listo para adjuntar</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setComprobanteFile(null)}
+                    className="p-1.5 hover:bg-binance-card rounded-lg text-binance-gray hover:text-binance-red transition-colors cursor-pointer ml-2"
+                    title="Eliminar comprobante"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <label className="flex items-center justify-center gap-2 px-4 py-3 bg-binance-black border border-dashed border-binance-border hover:border-binance-yellow/60 rounded-xl cursor-pointer transition-all text-xs text-binance-gray hover:text-white group">
+                  <Paperclip className="w-4 h-4 text-binance-yellow group-hover:scale-110 transition-transform" />
+                  <span className="font-medium">Adjuntar Comprobante (Imagen o PDF)</span>
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setComprobanteFile({ name: file.name });
+                      }
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              )}
             </div>
 
             {errorMsg && (
@@ -554,9 +822,9 @@ export default function Billeteras({
 
             <button
               type="submit"
-              disabled={!activeShiftId}
+              disabled={!activeShiftId || selectedWalletObj?.blocked}
               className={`w-full flex items-center justify-center gap-2 py-3 px-4 font-extrabold rounded-xl transition-all text-xs cursor-pointer ${
-                activeShiftId
+                activeShiftId && !selectedWalletObj?.blocked
                   ? 'bg-white hover:bg-white/90 text-binance-black'
                   : 'bg-binance-border text-binance-gray cursor-not-allowed shadow-none'
               }`}

@@ -223,11 +223,8 @@ export default function CalculadoraP2P({
         <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
           <h2 className="text-xl font-bold text-white flex items-center gap-2 font-display">
             <Calculator className="w-5 h-5 text-binance-yellow animate-pulse" />
-            Planilla de Arbitraje P2P (USDT)
+            Calculadora de Arbitraje P2P (USDT)
           </h2>
-          <span className="self-start sm:self-auto text-[10px] bg-binance-black border border-binance-border text-binance-yellow px-2.5 py-1 rounded font-bold uppercase font-mono tracking-wider">
-            Fórmulas Excel Integradas
-          </span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-binance-black rounded-xl p-5 border border-binance-border">
@@ -373,9 +370,6 @@ export default function CalculadoraP2P({
           <div className="bg-[#22c55e] px-5 py-3 flex justify-between items-center text-white font-bold font-sans tracking-wide">
             <span className="text-sm font-extrabold uppercase flex items-center gap-1.5">
               <TrendingUp className="w-4 h-4 text-white" /> RESULTADOS AUTOMÁTICOS
-            </span>
-            <span className="text-[10px] bg-emerald-700/50 px-2 py-0.5 rounded text-white font-mono uppercase font-bold">
-              PLANILLA EXCEL
             </span>
           </div>
 

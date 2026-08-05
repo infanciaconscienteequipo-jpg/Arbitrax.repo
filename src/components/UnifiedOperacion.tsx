@@ -241,12 +241,15 @@ export default function UnifiedOperacion({
         const exchangeName = tx.notes?.split('|').find(p => p.includes('Exchange:'))?.split('Exchange:')[1]?.trim() || 'Binance';
         const commissionPct = tx.commissionBinance || 0;
 
+        const txDateObj = tx.timestamp ? new Date(tx.timestamp) : null;
+        const isValidTxDate = txDateObj && !isNaN(txDateObj.getTime());
+
         lotesList.push({
           id: tx.id,
           title: `Lote #${tx.id.substring(0, 5).toUpperCase()}`,
-          timestamp: new Date(tx.timestamp).getTime(),
-          dateStr: tx.dateString || new Date(tx.timestamp).toLocaleDateString('es-AR'),
-          timeStr: tx.timeString || new Date(tx.timestamp).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+          timestamp: isValidTxDate ? txDateObj.getTime() : Date.now(),
+          dateStr: tx.dateString || (isValidTxDate ? txDateObj.toLocaleDateString('es-AR') : ''),
+          timeStr: tx.timeString || (isValidTxDate ? txDateObj.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''),
           initialQuantity: tx.quantity,
           remainingQuantity: tx.quantity,
           price: tx.unitPrice,
@@ -267,7 +270,7 @@ export default function UnifiedOperacion({
             lot.consumedBy.push({
               txId: tx.id,
               quantity: taken,
-              dateStr: tx.dateString || new Date(tx.timestamp).toLocaleDateString('es-AR'),
+              dateStr: tx.dateString || (tx.timestamp && !isNaN(new Date(tx.timestamp).getTime()) ? new Date(tx.timestamp).toLocaleDateString('es-AR') : ''),
               client: tx.client || 'Cliente P2P'
             });
 
