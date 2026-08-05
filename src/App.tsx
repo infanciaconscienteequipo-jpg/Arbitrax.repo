@@ -14,6 +14,18 @@ import Reportes from './components/Reportes';
 import TurnosControl from './components/TurnosControl';
 import Notificaciones from './components/Notificaciones';
 import Ajustes from './components/Ajustes';
+import SupabaseManager from './components/SupabaseManager';
+import Login from './components/Login';
+
+import {
+  fetchAppStateFromSupabase,
+  syncTransactionToSupabase,
+  syncWalletToSupabase,
+  syncShiftToSupabase,
+  syncIncomeExpenseToSupabase,
+  syncExchangeToSupabase,
+  syncUserToSupabase
+} from './lib/supabase';
 
 import {
   LayoutDashboard,
@@ -36,47 +48,58 @@ import {
   DollarSign,
   BarChart3,
   Bell,
-  CheckCircle2
+  CheckCircle2,
+  Database
 } from 'lucide-react';
 
 export default function App() {
   const [state, setState] = useState<AppState>(getInitialState());
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
+
+  // Load from Supabase on initial render if available
+  useEffect(() => {
+    fetchAppStateFromSupabase().then(remoteState => {
+      if (remoteState && Object.keys(remoteState).length > 0) {
+        setState(prev => ({
+          ...prev,
+          ...remoteState,
+          organizations: remoteState.organizations?.length ? remoteState.organizations : prev.organizations,
+          users: remoteState.users?.length ? remoteState.users : prev.users,
+          wallets: remoteState.wallets?.length ? remoteState.wallets : prev.wallets,
+          exchanges: remoteState.exchanges?.length ? remoteState.exchanges : prev.exchanges,
+        }));
+      }
+    });
+  }, []);
 
   // Sync state changes with localStorage
   useEffect(() => {
     saveState(state);
   }, [state]);
 
-  // Handle user login / role switch
-  const handleLogin = (identifier: string, password?: string): boolean => {
-    const cleanId = identifier.toLowerCase().trim();
-    const user = state.users.find(
-      u => (u.username.toLowerCase() === cleanId || (u.email && u.email.toLowerCase() === cleanId)) && (!password || u.password === password)
-    );
-    if (user) {
-      setState(prev => ({
-        ...prev,
-        currentUser: user,
-        currentOperator: user.name,
-      }));
-
-      if (user.role === 'SUPER_ADMIN') {
-        setActiveTab('saas-dashboard');
-      } else {
-        setActiveTab('dashboard');
-      }
-      return true;
+  // Handle user login success
+  const handleUserLoggedIn = (user: User) => {
+    setState(prev => ({
+      ...prev,
+      currentUser: user,
+      currentOperator: user.name,
+    }));
+    setShowLoginModal(false);
+    if (user.role === 'SUPER_ADMIN') {
+      setActiveTab('saas-dashboard');
+    } else {
+      setActiveTab('dashboard');
     }
-    return false;
   };
 
   const handleLogout = () => {
     setState(prev => ({
       ...prev,
-      currentUser: prev.users[0],
-      currentOperator: prev.users[0]?.name || '',
+      currentUser: null as any,
+      currentOperator: '',
     }));
+    setShowLoginModal(false);
     setActiveTab('dashboard');
   };
 
@@ -99,6 +122,7 @@ export default function App() {
 
   const handleAddUser = (newUser: User) => {
     setState(prev => ({ ...prev, users: [...prev.users, newUser] }));
+    syncUserToSupabase(newUser);
   };
 
   const handleDeleteUser = (username: string) => {
@@ -124,6 +148,9 @@ export default function App() {
       shiftId: txData.shiftId || state.activeShiftId || undefined,
     };
 
+    // Sync to Supabase
+    syncTransactionToSupabase(newTx);
+
     setState(prev => {
       // Update Wallets
       const updatedWallets = prev.wallets.map(w => {
@@ -138,17 +165,18 @@ export default function App() {
           } else if (txData.type === 'egreso_fondos') {
             pesosChange = -txData.totalPesos;
           }
-          return {
+          const updatedW = {
             ...w,
             saldoPesos: Math.max(0, w.saldoPesos + pesosChange),
           };
+          syncWalletToSupabase(updatedW);
+          return updatedW;
         }
         return w;
       });
 
       // Update Exchanges
       const updatedExchanges = prev.exchanges.map(ex => {
-        // Find match or update first active exchange
         if (ex.id === txData.walletId || ex.name.toLowerCase().includes('binance') || prev.exchanges.length === 1) {
           let cryptoChange = 0;
           if (txData.type === 'compra') {
@@ -156,10 +184,12 @@ export default function App() {
           } else if (txData.type === 'venta') {
             cryptoChange = -txData.quantity; // VENTA: Se descuenta stock de la exchange
           }
-          return {
+          const updatedEx = {
             ...ex,
             balanceCrypto: Math.max(0, ex.balanceCrypto + cryptoChange),
           };
+          syncExchangeToSupabase(updatedEx);
+          return updatedEx;
         }
         return ex;
       });
@@ -179,13 +209,21 @@ export default function App() {
       ...prev,
       exchanges: [...prev.exchanges, newEx],
     }));
+    syncExchangeToSupabase(newEx);
   };
 
   const handleUpdateExchangeBalance = (exchangeId: string, newBalance: number) => {
-    setState(prev => ({
-      ...prev,
-      exchanges: prev.exchanges.map(ex => ex.id === exchangeId ? { ...ex, balanceCrypto: newBalance } : ex),
-    }));
+    setState(prev => {
+      const updatedExchanges = prev.exchanges.map(ex => {
+        if (ex.id === exchangeId) {
+          const updated = { ...ex, balanceCrypto: newBalance };
+          syncExchangeToSupabase(updated);
+          return updated;
+        }
+        return ex;
+      });
+      return { ...prev, exchanges: updatedExchanges };
+    });
   };
 
   // Income / Expense Handlers
@@ -194,8 +232,9 @@ export default function App() {
       ...recordData,
       shiftId: recordData.shiftId || state.activeShiftId || undefined,
     };
+    syncIncomeExpenseToSupabase(record);
+
     setState(prev => {
-      // Apply to wallet or exchange balance
       let updatedWallets = [...prev.wallets];
       let updatedExchanges = [...prev.exchanges];
 
@@ -203,7 +242,9 @@ export default function App() {
         updatedWallets = updatedWallets.map(w => {
           if (w.id === record.walletOrExchangeId) {
             const delta = record.type === 'ingreso' ? record.amount : -record.amount;
-            return { ...w, saldoPesos: Math.max(0, w.saldoPesos + delta) };
+            const updatedW = { ...w, saldoPesos: Math.max(0, w.saldoPesos + delta) };
+            syncWalletToSupabase(updatedW);
+            return updatedW;
           }
           return w;
         });
@@ -211,7 +252,9 @@ export default function App() {
         updatedExchanges = updatedExchanges.map(ex => {
           if (ex.id === record.walletOrExchangeId) {
             const delta = record.type === 'ingreso' ? record.amount : -record.amount;
-            return { ...ex, balanceCrypto: Math.max(0, ex.balanceCrypto + delta) };
+            const updatedEx = { ...ex, balanceCrypto: Math.max(0, ex.balanceCrypto + delta) };
+            syncExchangeToSupabase(updatedEx);
+            return updatedEx;
           }
           return ex;
         });
@@ -245,32 +288,38 @@ export default function App() {
   };
 
   const handleAddWallet = (walletName: string, titular: string, initialBalancePesos: number) => {
-    setState(prev => {
-      const colors = ['blue', 'green', 'orange', 'purple', 'teal', 'cyan'];
-      const randomColor = colors[prev.wallets.length % colors.length];
-      const newWallet: Wallet = {
-        id: `wallet_${Date.now()}`,
-        name: walletName,
-        saldoPesos: initialBalancePesos,
-        saldoUsdt: 0,
-        color: randomColor,
-        providerType: 'Billetera P2P',
-        titular,
-        limitARS: 3000000,
-        blocked: false,
-      };
-      return {
-        ...prev,
-        wallets: [...prev.wallets, newWallet],
-      };
-    });
+    const colors = ['blue', 'green', 'orange', 'purple', 'teal', 'cyan'];
+    const randomColor = colors[state.wallets.length % colors.length];
+    const newWallet: Wallet = {
+      id: `wallet_${Date.now()}`,
+      name: walletName,
+      saldoPesos: initialBalancePesos,
+      saldoUsdt: 0,
+      color: randomColor,
+      providerType: 'Billetera P2P',
+      titular,
+      limitARS: 3000000,
+      blocked: false,
+    };
+    syncWalletToSupabase(newWallet);
+    setState(prev => ({
+      ...prev,
+      wallets: [...prev.wallets, newWallet],
+    }));
   };
 
   const handleUpdateWallet = (walletId: string, updates: Partial<Wallet>) => {
-    setState(prev => ({
-      ...prev,
-      wallets: prev.wallets.map(w => w.id === walletId ? { ...w, ...updates } : w),
-    }));
+    setState(prev => {
+      const updatedWallets = prev.wallets.map(w => {
+        if (w.id === walletId) {
+          const updated = { ...w, ...updates };
+          syncWalletToSupabase(updated);
+          return updated;
+        }
+        return w;
+      });
+      return { ...prev, wallets: updatedWallets };
+    });
   };
 
   const handleAddP2PCalc = (calc: P2PArbitrage) => {
@@ -299,6 +348,8 @@ export default function App() {
       operationsCount: 0,
     };
 
+    syncShiftToSupabase(newShift);
+
     setState(prev => ({
       ...prev,
       shifts: [newShift, ...prev.shifts],
@@ -308,17 +359,48 @@ export default function App() {
   };
 
   const handleEndShift = (shiftId: string) => {
-    setState(prev => ({
-      ...prev,
-      shifts: prev.shifts.map(s => s.id === shiftId ? { ...s, endTime: new Date().toISOString() } : s),
-      activeShiftId: null,
-    }));
+    setState(prev => {
+      const updatedShifts = prev.shifts.map(s => {
+        if (s.id === shiftId) {
+          const updated = { ...s, endTime: new Date().toISOString() };
+          syncShiftToSupabase(updated);
+          return updated;
+        }
+        return s;
+      });
+      return {
+        ...prev,
+        shifts: updatedShifts,
+        activeShiftId: null,
+      };
+    });
   };
+
 
   const activeShift = state.shifts.find(s => s.id === state.activeShiftId) || null;
 
+  // If no user is logged in, present the full screen Login
+  if (!state.currentUser) {
+    return (
+      <Login
+        users={state.users}
+        onLoginSuccess={handleUserLoggedIn}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-binance-black font-sans text-binance-light flex flex-col antialiased selection:bg-binance-yellow selection:text-binance-black">
+      {/* LOGIN MODAL OVERLAY */}
+      {showLoginModal && (
+        <Login
+          users={state.users}
+          onLoginSuccess={handleUserLoggedIn}
+          isModal={true}
+          onCloseModal={() => setShowLoginModal(false)}
+        />
+      )}
+
       {/* HEADER */}
       <header className="bg-binance-dark border-b border-binance-border shrink-0 sticky top-0 z-50 shadow-md font-mono">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col sm:flex-row justify-between items-center gap-4">
@@ -342,39 +424,44 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {state.currentUser?.role === 'SUPER_ADMIN' ? (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/20 border border-amber-500/40 rounded-xl">
-                <Crown className="w-4 h-4 text-amber-400" />
-                <span className="text-[11px] font-bold text-amber-300">
-                  SUPER ADMIN: <span className="text-white">{state.currentUser.name}</span>
+            {/* CURRENT USER BADGE */}
+            <div className="flex items-center gap-2.5 px-3 py-1.5 bg-binance-card border border-binance-border rounded-xl">
+              <div className="w-7 h-7 rounded-lg bg-binance-yellow/20 text-binance-yellow flex items-center justify-center font-bold text-xs uppercase">
+                {state.currentUser.name.charAt(0)}
+              </div>
+              <div className="text-left leading-tight">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-white max-w-[130px] truncate block">
+                    {state.currentUser.name}
+                  </span>
+                  {state.currentUser.role === 'SUPER_ADMIN' ? (
+                    <span className="px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded text-[9px] font-extrabold">SUPER ADMIN</span>
+                  ) : state.currentUser.role === 'ADMIN' ? (
+                    <span className="px-1.5 py-0.2 bg-blue-500/20 text-blue-300 rounded text-[9px] font-bold">ADMIN</span>
+                  ) : (
+                    <span className="px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded text-[9px] font-bold">VENDEDOR</span>
+                  )}
+                </div>
+                <span className="text-[10px] text-binance-gray block font-mono">
+                  @{state.currentUser.username}
                 </span>
               </div>
-            ) : (
-              <button
-                onClick={() => {
-                  const superAdmin = state.users.find(u => u.role === 'SUPER_ADMIN') || {
-                    id: 'u-super-1',
-                    email: 'arbitrax19@gmail.com',
-                    username: 'superadmin',
-                    name: 'Super Admin ArbitraX',
-                    password: 'Arbitrax.2006',
-                    role: 'SUPER_ADMIN',
-                    organization_id: null
-                  };
-                  setState(prev => ({ ...prev, currentUser: superAdmin }));
-                  setActiveTab('saas-dashboard');
-                }}
-                className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500/20 to-amber-600/30 hover:from-amber-500/30 text-amber-300 border border-amber-500/50 rounded-xl text-xs font-black transition-all cursor-pointer shadow-md flex items-center gap-1.5"
-              >
-                <Crown className="w-3.5 h-3.5 text-amber-400" />
-                👑 Panel Super Admin
-              </button>
-            )}
+            </div>
+
+            <button
+              onClick={() => setShowLoginModal(true)}
+              className="px-3 py-1.5 bg-binance-card hover:bg-binance-border text-binance-gray hover:text-white border border-binance-border rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+              title="Cambiar Usuario / Iniciar Sesión con otra cuenta"
+            >
+              <UserIcon className="w-3.5 h-3.5 text-binance-yellow" />
+              Cambiar Usuario
+            </button>
 
             <button
               onClick={handleLogout}
-              className="px-3 py-1.5 bg-binance-red/20 hover:bg-binance-red/30 text-binance-red border border-binance-red/40 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              className="px-3 py-1.5 bg-binance-red/20 hover:bg-binance-red/30 text-binance-red border border-binance-red/40 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
             >
+              <LogOut className="w-3.5 h-3.5" />
               Cerrar Sesión
             </button>
           </div>
@@ -553,6 +640,16 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => setActiveTab('supabase-db')}
+                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === 'supabase-db' ? 'bg-binance-card text-emerald-400 border-l-2 border-emerald-400' : 'text-binance-gray hover:text-white'
+                }`}
+              >
+                <Database className="w-4 h-4 text-emerald-400" />
+                Base de Datos Supabase
+              </button>
+
+              <button
                 onClick={() => setActiveTab('ajustes')}
                 className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                   activeTab === 'ajustes' ? 'bg-binance-card text-binance-gray border-l-2 border-binance-gray' : 'text-binance-gray hover:text-white'
@@ -567,6 +664,13 @@ export default function App() {
 
         {/* MAIN DISPLAY AREA */}
         <main className="flex-1 min-w-0">
+          {activeTab === 'supabase-db' && (
+            <SupabaseManager
+              state={state}
+              onUpdateState={(newState) => setState(prev => ({ ...prev, ...newState }))}
+            />
+          )}
+
           {(activeTab.startsWith('saas-') || activeTab === 'saas-admin') && (
             <SaasAdmin
               organizations={state.organizations || []}
