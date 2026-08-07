@@ -154,19 +154,20 @@ export default function VendedoresManager({
   };
 
   const handleDelete = async (seller: User) => {
-    if (!confirm(`¿Está seguro de eliminar al vendedor "${seller.name}" (${seller.username})?`)) {
+    if (!confirm('¿Desea desactivar este vendedor?')) {
       return;
     }
     setLoading(true);
+    setErrorMsg('');
+    setSuccessMsg('');
     try {
-      const ok = await authService.deleteSeller(seller.id || seller.username);
+      const sellerId = seller.id || seller.username;
+      const ok = await authService.deleteSeller(sellerId);
       if (ok) {
-        setSuccessMsg(`✅ Vendedor ${seller.name} eliminado de Supabase.`);
+        setSuccessMsg('Vendedor eliminado correctamente.');
         if (onDeleteUser) onDeleteUser(seller.username);
         await loadSellersFromSupabase();
         setTimeout(() => setSuccessMsg(''), 4000);
-      } else {
-        setErrorMsg('No se pudo eliminar el vendedor de Supabase.');
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Error al eliminar vendedor.');
@@ -193,6 +194,8 @@ export default function VendedoresManager({
       return;
     }
     setLoading(true);
+    setErrorMsg('');
+    setSuccessMsg('');
     try {
       const ok = await authService.updateSeller({
         id: seller.id,
@@ -202,12 +205,10 @@ export default function VendedoresManager({
         active: seller.active !== false && seller.status === 'active',
       });
       if (ok) {
-        setSuccessMsg(`✅ Vendedor ${seller.username} actualizado mediante rpc_update_seller.`);
+        setSuccessMsg(`✅ Vendedor ${seller.username} actualizado correctamente.`);
         cancelEdit();
         await loadSellersFromSupabase();
         setTimeout(() => setSuccessMsg(''), 4000);
-      } else {
-        setErrorMsg('Error al actualizar vendedor.');
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Error al actualizar vendedor.');

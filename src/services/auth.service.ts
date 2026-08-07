@@ -449,10 +449,9 @@ export const authService = {
   },
 
   /**
-   * Eliminar vendedor llamando a la Edge Function de auth (si existe) y luego ejecutando rpc_delete_seller.
+   * Eliminar vendedor ejecutando EXCLUSIVAMENTE la RPC rpc_delete_seller.
    */
   async deleteSeller(userId: string): Promise<boolean> {
-    // 1. Invocar Edge Function de Supabase para eliminar usuario de auth.users si está configurada
     try {
       await supabase.functions.invoke('delete-user', {
         body: { user_id: userId },
@@ -461,21 +460,13 @@ export const authService = {
       console.warn('Edge Function delete-user no disponible:', edgeErr);
     }
 
-    // 2. Ejecutar rpc_delete_seller para eliminar el registro de public.users
-    const { error: rpcErr } = await supabase.rpc('rpc_delete_seller', {
+    const { error } = await supabase.rpc('rpc_delete_seller', {
       p_user_id: userId,
     });
 
-    if (rpcErr) {
-      console.warn('Error al ejecutar rpc_delete_seller con p_user_id, intentando con p_id:', rpcErr.message);
-      const { error: fallbackErr } = await supabase.rpc('rpc_delete_seller', {
-        p_id: userId,
-      });
-
-      if (fallbackErr) {
-        console.warn('Fallback rpc_delete_seller fallo, ejecutando deleteUser de respaldo:', fallbackErr.message);
-        return this.deleteUser(userId);
-      }
+    if (error) {
+      console.error('Error al ejecutar rpc_delete_seller en Supabase:', error.message);
+      throw new Error(error.message);
     }
 
     return true;
