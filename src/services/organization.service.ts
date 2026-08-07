@@ -45,64 +45,52 @@ export const organizationService = {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('No hay sesión activa en Supabase');
 
-    try {
-      // 1. Invocación de rpc_create_company
-      const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_create_company', {
-        p_name: org.name,
-        p_tax_id: org.taxId || null,
-        p_country: org.country || 'Argentina',
-        p_status: org.status || 'active',
-        p_monthly_fee: org.monthlyFee || 0,
-      });
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_create_company', {
+      p_name: org.name,
+      p_tax_id: org.taxId || null,
+      p_country: org.country || 'Argentina',
+      p_monthly_fee: org.monthlyFee || 0,
+      p_subscription_status: org.status || 'active',
+      p_subscription_expires_at: org.subscriptionExpiresAt || null,
+      p_max_users: org.maxUsers || 10,
+      p_max_wallets: (org as any).maxWallets || 10,
+      p_max_exchanges: (org as any).maxExchanges || 10,
+      p_storage_limit_mb: (org as any).storageLimitMb || 1024,
+    });
 
-      if (!rpcErr && rpcRes) {
-        if (typeof rpcRes === 'object' && rpcRes.id) {
-          return mapOrgFromDB(rpcRes);
-        } else if (typeof rpcRes === 'string') {
-          const fetched = await this.getById(rpcRes);
-          if (fetched) return fetched;
-        }
+    if (rpcErr) {
+      console.error('Error al crear la organización mediante RPC rpc_create_company:', rpcErr.message);
+      throw new Error(rpcErr.message);
+    }
+
+    if (rpcRes) {
+      if (Array.isArray(rpcRes) && rpcRes.length > 0) {
+        return mapOrgFromDB(rpcRes[0]);
+      } else if (typeof rpcRes === 'object' && rpcRes.id) {
+        return mapOrgFromDB(rpcRes);
+      } else if (typeof rpcRes === 'string') {
+        const fetched = await this.getById(rpcRes);
+        if (fetched) return fetched;
+        return {
+          id: rpcRes,
+          name: org.name || '',
+          taxId: org.taxId || '',
+          country: org.country || 'Argentina',
+          status: org.status || 'active',
+          active: org.status === 'active',
+          monthlyFee: org.monthlyFee || 0,
+          createdAt: org.createdAt || new Date().toISOString(),
+          fechaIngreso: org.fechaIngreso || org.createdAt || new Date().toISOString(),
+        } as Organization;
       }
-    } catch (err) {
-      console.warn('RPC rpc_create_company no disponible, realizando insert directo en Supabase.');
     }
 
-    // 2. Insert directo en Supabase (dejar que Supabase genere UUID si no hay id real)
-    const payload: any = {
-      name: org.name,
-      tax_id: org.taxId || null,
-      country: org.country || 'Argentina',
-      status: org.status || 'active',
-      active: org.status === 'active',
-      monthly_fee: org.monthlyFee || 0,
-      subscription_expires_at: org.subscriptionExpiresAt || null,
-      feature_flags: org.featureFlags || {
-        p2pCalculator: true,
-        shiftClosing: true,
-        advancedReports: true,
-        customCryptos: true,
-        auditLogs: true,
-      },
-      created_at: org.createdAt || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    // Si la RPC finalizó exitosamente pero devolvió vacío, buscamos la empresa recién creada en la lista
+    const currentOrgs = await this.list();
+    const createdMatch = currentOrgs.find(o => o.name === org.name);
+    if (createdMatch) return createdMatch;
 
-    if (org.id && !org.id.startsWith('org-')) {
-      payload.id = org.id;
-    }
-
-    const { data, error } = await supabase.from('organizations').insert(payload).select().single();
-    if (error) {
-      // Si falla insert (ej por id preexistente), probar upsert
-      const { data: upsertData, error: upsertErr } = await supabase.from('organizations').upsert(payload).select().single();
-      if (upsertErr) {
-        console.error('Error al crear organización en Supabase:', upsertErr.message);
-        throw upsertErr;
-      }
-      return mapOrgFromDB(upsertData);
-    }
-
-    return mapOrgFromDB(data);
+    throw new Error('La función rpc_create_company no devolvió el resultado de la organización.');
   },
 
   async update(org: Organization): Promise<Organization> {

@@ -283,18 +283,24 @@ export const dashboardService = {
 
     try {
       if (state.organizations.length > 0) {
-        const dbOrgs = state.organizations.map(o => ({
-          id: o.id,
-          name: o.name,
-          tax_id: o.taxId || null,
-          country: o.country || 'Argentina',
-          status: o.status || 'active',
-          active: o.status === 'active',
-          monthly_fee: o.monthlyFee || 0,
-          subscription_expires_at: o.subscriptionExpiresAt || null,
-          feature_flags: o.featureFlags,
-        }));
-        await supabase.from('organizations').upsert(dbOrgs);
+        for (const o of state.organizations) {
+          try {
+            await supabase.rpc('rpc_create_company', {
+              p_name: o.name,
+              p_tax_id: o.taxId || null,
+              p_country: o.country || 'Argentina',
+              p_monthly_fee: o.monthlyFee || 0,
+              p_subscription_status: o.status || 'active',
+              p_subscription_expires_at: o.subscriptionExpiresAt || null,
+              p_max_users: o.maxUsers || 10,
+              p_max_wallets: 10,
+              p_max_exchanges: 10,
+              p_storage_limit_mb: 1024,
+            });
+          } catch (rpcErr) {
+            console.warn('Error al ejecutar rpc_create_company en seed:', rpcErr);
+          }
+        }
       }
 
       if (state.users.length > 0) {
