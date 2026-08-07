@@ -194,10 +194,12 @@ export default function VendedoresManager({
     }
     setLoading(true);
     try {
-      const ok = await authService.updateSeller(seller.id, {
+      const ok = await authService.updateSeller({
+        id: seller.id,
         name: editName.trim(),
-        email: editEmail.trim().toLowerCase(),
         username: seller.username,
+        email: editEmail.trim().toLowerCase(),
+        active: seller.active !== false && seller.status === 'active',
       });
       if (ok) {
         setSuccessMsg(`✅ Vendedor ${seller.username} actualizado mediante rpc_update_seller.`);

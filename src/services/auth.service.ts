@@ -425,32 +425,26 @@ export const authService = {
    * Actualizar datos del vendedor utilizando EXCLUSIVAMENTE la RPC rpc_update_seller.
    * NUNCA utiliza supabase.from("users").update().
    */
-  async updateSeller(userId: string, data: { name: string; email: string; username?: string }): Promise<boolean> {
-    const cleanName = data.name.trim();
-    const cleanEmail = data.email.trim().toLowerCase();
-    const cleanUsername = data.username ? data.username.trim().toLowerCase() : undefined;
-
-    // Ejecución exclusiva de rpc_update_seller
-    const { error: rpcErr } = await supabase.rpc('rpc_update_seller', {
-      p_user_id: userId,
-      p_name: cleanName,
-      p_email: cleanEmail,
-      p_username: cleanUsername,
+  async updateSeller(seller: {
+    id: string;
+    name: string;
+    username: string;
+    email: string;
+    active: boolean;
+  }): Promise<boolean> {
+    const { error } = await supabase.rpc('rpc_update_seller', {
+      p_user_id: seller.id,
+      p_name: seller.name,
+      p_username: seller.username,
+      p_email: seller.email,
+      p_active: seller.active,
     });
 
-    if (rpcErr) {
-      console.warn('Error al ejecutar rpc_update_seller con p_user_id, intentando con p_id:', rpcErr.message);
-      const { error: fallbackErr } = await supabase.rpc('rpc_update_seller', {
-        p_id: userId,
-        p_name: cleanName,
-        p_email: cleanEmail,
-      });
-
-      if (fallbackErr) {
-        console.error('Error al ejecutar rpc_update_seller en Supabase:', fallbackErr.message);
-        throw new Error(`Error rpc_update_seller: ${fallbackErr.message}`);
-      }
+    if (error) {
+      console.error('Error al ejecutar rpc_update_seller en Supabase:', error.message);
+      throw new Error(`Error rpc_update_seller: ${error.message}`);
     }
+
     return true;
   },
 
