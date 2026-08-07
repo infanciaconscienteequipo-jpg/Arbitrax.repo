@@ -132,14 +132,10 @@ export default function App() {
   };
 
   const handleAddUser = (newUser: User) => {
-    setState(prev => ({ ...prev, users: [...prev.users, newUser] }));
-    authService.createUser({
-      email: newUser.email || `${newUser.username}@arbitrax.local`,
-      password: newUser.password,
-      name: newUser.name,
-      username: newUser.username,
-      role: newUser.role,
-      organization_id: newUser.organization_id || authOrg?.id || '',
+    setState(prev => {
+      const exists = prev.users.some(u => u.id === newUser.id || u.username.toLowerCase() === newUser.username.toLowerCase());
+      if (exists) return prev;
+      return { ...prev, users: [...prev.users, newUser] };
     });
   };
 
@@ -723,6 +719,7 @@ export default function App() {
                 currentUser={currentUser as any}
                 onAddUser={handleAddUser}
                 onDeleteUser={handleDeleteUser}
+                onUpdateUsers={handleUpdateUsers}
               />
             )}
 

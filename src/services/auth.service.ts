@@ -220,7 +220,12 @@ export const authService = {
 
     let query = supabase.from('users').select('*').order('created_at', { ascending: false });
     if (role) {
-      query = query.ilike('role', role);
+      const r = role.toUpperCase();
+      if (r === 'SELLER' || r === 'VENDEDOR') {
+        query = query.or('role.ilike.SELLER,role.ilike.VENDEDOR,role.ilike.vendedor,role.ilike.operator');
+      } else {
+        query = query.ilike('role', role);
+      }
     }
     if (organizationId) {
       query = query.eq('organization_id', organizationId);
@@ -237,12 +242,84 @@ export const authService = {
       username: u.username || u.email?.split('@')[0] || 'usuario',
       name: u.name || u.username || 'Usuario',
       email: u.email,
-      role: (u.role || 'VENDEDOR').toUpperCase(),
+      role: (u.role || 'SELLER').toUpperCase(),
       organization_id: u.organization_id || '',
       status: u.status || 'active',
       active: u.active !== false && u.status === 'active',
       password: u.password,
     }));
+  },
+
+  /**
+   * Crear Vendedor en Supabase Auth y public.users mediante rpc_create_seller.
+   * NO inserta ni realiza upsert directamente en public.users.
+   */
+  async createSeller(params: {
+    email: string;
+    password?: string;
+    name: string;
+    username: string;
+    organization_id: string;
+  }): Promise<UserProfile> {
+    const cleanEmail = params.email.trim().toLowerCase();
+    const cleanPassword = params.password ? params.password.trim() : 'Arbitrax.2006';
+    const cleanUsername = params.username.trim().toLowerCase();
+    const cleanName = params.name.trim();
+
+    if (!params.organization_id) {
+      throw new Error('El vendedor debe heredarse de la organización activa del administrador.');
+    }
+
+    // 1. Crear usuario en auth.users vía signUp de Supabase Auth
+    const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+      email: cleanEmail,
+      password: cleanPassword,
+      options: {
+        data: {
+          name: cleanName,
+          username: cleanUsername,
+          role: 'SELLER',
+          organization_id: params.organization_id,
+        },
+      },
+    });
+
+    if (signUpErr) {
+      console.error('Error al registrar usuario en Supabase Auth:', signUpErr.message);
+      throw new Error(signUpErr.message);
+    }
+
+    const authUserId = signUpData?.user?.id;
+    if (!authUserId) {
+      throw new Error('No se pudo obtener el auth_user_id de Supabase Auth.');
+    }
+
+    // 2. Ejecutar rpc_create_seller con p_auth_user_id, p_organization_id, p_username, p_name, p_email
+    const { error: rpcErr } = await supabase.rpc('rpc_create_seller', {
+      p_auth_user_id: authUserId,
+      p_organization_id: params.organization_id,
+      p_username: cleanUsername,
+      p_name: cleanName,
+      p_email: cleanEmail,
+    });
+
+    if (rpcErr) {
+      console.error('Error al ejecutar rpc_create_seller:', rpcErr.message);
+      throw new Error(rpcErr.message);
+    }
+
+    return {
+      id: authUserId,
+      auth_user_id: authUserId,
+      username: cleanUsername,
+      name: cleanName,
+      email: cleanEmail,
+      role: 'SELLER' as any,
+      organization_id: params.organization_id,
+      status: 'active',
+      active: true,
+      password: cleanPassword,
+    };
   },
 
   /**
@@ -270,9 +347,20 @@ export const authService = {
     password?: string;
     name: string;
     username: string;
-    role: 'ADMIN' | 'VENDEDOR' | 'SUPER_ADMIN' | string;
+    role: 'ADMIN' | 'VENDEDOR' | 'SELLER' | 'SUPER_ADMIN' | string;
     organization_id: string;
   }): Promise<UserProfile> {
+    const roleUpper = (params.role || '').toUpperCase();
+    if (roleUpper === 'SELLER' || roleUpper === 'VENDEDOR') {
+      return this.createSeller({
+        email: params.email,
+        password: params.password,
+        name: params.name,
+        username: params.username,
+        organization_id: params.organization_id,
+      });
+    }
+
     const cleanEmail = params.email.trim().toLowerCase();
     const cleanPassword = params.password || 'Arbitrax.2006';
     const cleanUsername = params.username.trim().toLowerCase();
@@ -302,7 +390,7 @@ export const authService = {
       console.warn('Excepción al registrar usuario en Supabase Auth:', err);
     }
 
-    // 2. Invocación de RPCs de Supabase (rpc_create_admin, create_user_profile, create_user)
+    // 2. Invocación de RPCs de Supabase (rpc_create_admin)
     try {
       if (params.role === 'ADMIN') {
         await supabase.rpc('rpc_create_admin', {
@@ -311,16 +399,6 @@ export const authService = {
           p_name: params.name,
           p_username: cleanUsername,
           p_organization_id: params.organization_id,
-        });
-      } else {
-        await supabase.rpc('create_user_profile', {
-          p_auth_id: authUserId || undefined,
-          p_email: cleanEmail,
-          p_username: cleanUsername,
-          p_name: params.name,
-          p_role: params.role,
-          p_organization_id: params.organization_id,
-          p_password: cleanPassword,
         });
       }
     } catch (rpcErr) {
@@ -391,7 +469,11 @@ export const authService = {
       if (!data.status) updatePayload.status = data.active ? 'active' : 'disabled';
     }
 
-    const { error } = await supabase.from('users').update(updatePayload).eq('id', userId);
+    const { error } = await supabase
+      .from('users')
+      .update(updatePayload)
+      .or(`id.eq.${userId},auth_user_id.eq.${userId},username.eq.${userId}`);
+
     if (error) {
       console.error('Error al actualizar usuario en Supabase:', error.message);
       return false;
@@ -406,7 +488,11 @@ export const authService = {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return false;
 
-    const { error } = await supabase.from('users').delete().eq('id', userId);
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .or(`id.eq.${userId},auth_user_id.eq.${userId},username.eq.${userId}`);
+
     if (error) {
       console.error('Error al eliminar usuario en Supabase:', error.message);
       return false;
