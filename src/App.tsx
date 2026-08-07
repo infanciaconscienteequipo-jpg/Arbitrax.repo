@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AppState, Wallet, Transaction, P2PArbitrage, Shift, User, Organization, ExchangeAccount, IncomeExpenseRecord } from './types';
-import { getInitialState, saveState, clearAllData } from './utils/dataStore';
+import { clearAllData } from './utils/dataStore';
+import { useAuth } from './hooks/useAuth';
+import RequireAuth from './auth/RequireAuth';
 
 import Dashboard from './components/Dashboard';
 import Movimientos from './components/Movimientos';
@@ -14,18 +16,14 @@ import Reportes from './components/Reportes';
 import TurnosControl from './components/TurnosControl';
 import Notificaciones from './components/Notificaciones';
 import Ajustes from './components/Ajustes';
-import SupabaseManager from './components/SupabaseManager';
-import Login from './components/Login';
 
-import {
-  fetchAppStateFromSupabase,
-  syncTransactionToSupabase,
-  syncWalletToSupabase,
-  syncShiftToSupabase,
-  syncIncomeExpenseToSupabase,
-  syncExchangeToSupabase,
-  syncUserToSupabase
-} from './lib/supabase';
+import { dashboardService } from './services/dashboard.service';
+import { transactionService } from './services/transaction.service';
+import { walletService } from './services/wallet.service';
+import { shiftService } from './services/shift.service';
+import { exchangeService } from './services/exchange.service';
+import { organizationService } from './services/organization.service';
+import { authService } from './services/auth.service';
 
 import {
   LayoutDashboard,
@@ -53,13 +51,46 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  const [state, setState] = useState<AppState>(getInitialState());
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
-  const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
+  const { user: authUser, organization: authOrg, logout: authLogout } = useAuth();
+  const [state, setState] = useState<AppState>({
+    currentUser: authUser as any,
+    currentOperator: authUser?.name || '',
+    activeShiftId: null,
+    wallets: [],
+    exchanges: [],
+    transactions: [],
+    incomeExpenses: [],
+    shifts: [],
+    p2pCalcs: [],
+    users: [],
+    organizations: authOrg ? [authOrg] : []
+  });
 
-  // Load from Supabase on initial render if available
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
+
+  // Sincronizar el usuario autenticado de Supabase Auth con el estado de la app
   useEffect(() => {
-    fetchAppStateFromSupabase().then(remoteState => {
+    if (authUser) {
+      setState(prev => ({
+        ...prev,
+        currentUser: authUser as any,
+        currentOperator: authUser.name
+      }));
+
+      // Redirección inicial basada en Rol
+      if (authUser.role === 'SUPER_ADMIN') {
+        setActiveTab('saas-dashboard');
+      } else {
+        setActiveTab('dashboard');
+      }
+    }
+  }, [authUser]);
+
+  // Cargar datos remotos desde Supabase
+  useEffect(() => {
+    if (!authUser) return;
+
+    dashboardService.fetchAppState(authUser?.organization_id || undefined).then(remoteState => {
       if (remoteState && Object.keys(remoteState).length > 0) {
         setState(prev => ({
           ...prev,
@@ -71,45 +102,25 @@ export default function App() {
         }));
       }
     });
-  }, []);
+  }, [authUser]);
 
-  // Sync state changes with localStorage
-  useEffect(() => {
-    saveState(state);
-  }, [state]);
+  const currentUser = authUser || state.currentUser;
+  const isVendedor = currentUser?.role === 'VENDEDOR';
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
 
-  // Handle user login success
-  const handleUserLoggedIn = (user: User) => {
-    setState(prev => ({
-      ...prev,
-      currentUser: user,
-      currentOperator: user.name,
-    }));
-    setShowLoginModal(false);
-    if (user.role === 'SUPER_ADMIN') {
-      setActiveTab('saas-dashboard');
-    } else {
-      setActiveTab('dashboard');
-    }
-  };
-
-  const handleLogout = () => {
-    setState(prev => ({
-      ...prev,
-      currentUser: null as any,
-      currentOperator: '',
-    }));
-    setShowLoginModal(false);
-    setActiveTab('dashboard');
+  const handleLogout = async () => {
+    await authLogout();
   };
 
   // Organizations and Users handlers
   const handleUpdateOrganizations = (orgs: Organization[]) => {
     setState(prev => ({ ...prev, organizations: orgs }));
+    orgs.forEach(org => organizationService.sync(org));
   };
 
   const handleAddOrganization = (newOrg: Organization) => {
     setState(prev => ({ ...prev, organizations: [...(prev.organizations || []), newOrg] }));
+    organizationService.sync(newOrg);
   };
 
   const handleUpdateUsers = (updatedUsers: User[]) => {
@@ -122,7 +133,14 @@ export default function App() {
 
   const handleAddUser = (newUser: User) => {
     setState(prev => ({ ...prev, users: [...prev.users, newUser] }));
-    syncUserToSupabase(newUser);
+    authService.createUser({
+      email: newUser.email || `${newUser.username}@arbitrax.local`,
+      password: newUser.password,
+      name: newUser.name,
+      username: newUser.username,
+      role: newUser.role,
+      organization_id: newUser.organization_id || authOrg?.id || '',
+    });
   };
 
   const handleDeleteUser = (username: string) => {
@@ -146,10 +164,11 @@ export default function App() {
       dateString: dateStr,
       timeString: timeStr,
       shiftId: txData.shiftId || state.activeShiftId || undefined,
+      organization_id: txData.organization_id || authOrg?.id || '',
     };
 
-    // Sync to Supabase
-    syncTransactionToSupabase(newTx);
+    // Sync to Supabase via service
+    transactionService.sync(newTx);
 
     setState(prev => {
       // Update Wallets
@@ -157,9 +176,9 @@ export default function App() {
         if (w.id === txData.walletId) {
           let pesosChange = 0;
           if (txData.type === 'compra') {
-            pesosChange = -txData.totalPesos; // COMPRA: Se descuentan pesos de la billetera
+            pesosChange = -txData.totalPesos;
           } else if (txData.type === 'venta') {
-            pesosChange = txData.totalPesos;  // VENTA: Se aumentan pesos en la billetera
+            pesosChange = txData.totalPesos;
           } else if (txData.type === 'ingreso_fondos') {
             pesosChange = txData.totalPesos;
           } else if (txData.type === 'egreso_fondos') {
@@ -169,7 +188,7 @@ export default function App() {
             ...w,
             saldoPesos: Math.max(0, w.saldoPesos + pesosChange),
           };
-          syncWalletToSupabase(updatedW);
+          walletService.sync(updatedW);
           return updatedW;
         }
         return w;
@@ -180,15 +199,15 @@ export default function App() {
         if (ex.id === txData.walletId || ex.name.toLowerCase().includes('binance') || prev.exchanges.length === 1) {
           let cryptoChange = 0;
           if (txData.type === 'compra') {
-            cryptoChange = txData.quantity;  // COMPRA: Se aumenta stock en la exchange
+            cryptoChange = txData.quantity;
           } else if (txData.type === 'venta') {
-            cryptoChange = -txData.quantity; // VENTA: Se descuenta stock de la exchange
+            cryptoChange = -txData.quantity;
           }
           const updatedEx = {
             ...ex,
             balanceCrypto: Math.max(0, ex.balanceCrypto + cryptoChange),
           };
-          syncExchangeToSupabase(updatedEx);
+          exchangeService.sync(updatedEx);
           return updatedEx;
         }
         return ex;
@@ -209,7 +228,7 @@ export default function App() {
       ...prev,
       exchanges: [...prev.exchanges, newEx],
     }));
-    syncExchangeToSupabase(newEx);
+    exchangeService.sync(newEx);
   };
 
   const handleUpdateExchangeBalance = (exchangeId: string, newBalance: number) => {
@@ -217,7 +236,7 @@ export default function App() {
       const updatedExchanges = prev.exchanges.map(ex => {
         if (ex.id === exchangeId) {
           const updated = { ...ex, balanceCrypto: newBalance };
-          syncExchangeToSupabase(updated);
+          exchangeService.sync(updated);
           return updated;
         }
         return ex;
@@ -231,8 +250,9 @@ export default function App() {
     const record: IncomeExpenseRecord = {
       ...recordData,
       shiftId: recordData.shiftId || state.activeShiftId || undefined,
+      organization_id: recordData.organization_id || authOrg?.id || '',
     };
-    syncIncomeExpenseToSupabase(record);
+    dashboardService.syncIncomeExpense(record);
 
     setState(prev => {
       let updatedWallets = [...prev.wallets];
@@ -243,7 +263,7 @@ export default function App() {
           if (w.id === record.walletOrExchangeId) {
             const delta = record.type === 'ingreso' ? record.amount : -record.amount;
             const updatedW = { ...w, saldoPesos: Math.max(0, w.saldoPesos + delta) };
-            syncWalletToSupabase(updatedW);
+            walletService.sync(updatedW);
             return updatedW;
           }
           return w;
@@ -253,7 +273,7 @@ export default function App() {
           if (ex.id === record.walletOrExchangeId) {
             const delta = record.type === 'ingreso' ? record.amount : -record.amount;
             const updatedEx = { ...ex, balanceCrypto: Math.max(0, ex.balanceCrypto + delta) };
-            syncExchangeToSupabase(updatedEx);
+            exchangeService.sync(updatedEx);
             return updatedEx;
           }
           return ex;
@@ -282,7 +302,7 @@ export default function App() {
       totalPesos: amount,
       walletId,
       walletName: wallet.name,
-      operator: state.currentUser?.name || state.currentOperator || 'Manual Adjust',
+      operator: currentUser?.name || state.currentOperator || 'Manual Adjust',
       notes,
     });
   };
@@ -298,10 +318,11 @@ export default function App() {
       color: randomColor,
       providerType: 'Billetera P2P',
       titular,
+      organization_id: authOrg?.id || '',
       limitARS: 3000000,
       blocked: false,
     };
-    syncWalletToSupabase(newWallet);
+    walletService.sync(newWallet);
     setState(prev => ({
       ...prev,
       wallets: [...prev.wallets, newWallet],
@@ -313,7 +334,7 @@ export default function App() {
       const updatedWallets = prev.wallets.map(w => {
         if (w.id === walletId) {
           const updated = { ...w, ...updates };
-          syncWalletToSupabase(updated);
+          walletService.sync(updated);
           return updated;
         }
         return w;
@@ -346,9 +367,10 @@ export default function App() {
       totalSalesPesos: 0,
       totalGainsPesos: 0,
       operationsCount: 0,
+      organization_id: authOrg?.id || '',
     };
 
-    syncShiftToSupabase(newShift);
+    shiftService.sync(newShift);
 
     setState(prev => ({
       ...prev,
@@ -363,7 +385,7 @@ export default function App() {
       const updatedShifts = prev.shifts.map(s => {
         if (s.id === shiftId) {
           const updated = { ...s, endTime: new Date().toISOString() };
-          syncShiftToSupabase(updated);
+          shiftService.sync(updated);
           return updated;
         }
         return s;
@@ -376,440 +398,404 @@ export default function App() {
     });
   };
 
-
   const activeShift = state.shifts.find(s => s.id === state.activeShiftId) || null;
 
-  // If no user is logged in, present the full screen Login
-  if (!state.currentUser) {
-    return (
-      <Login
-        users={state.users}
-        onLoginSuccess={handleUserLoggedIn}
-      />
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-binance-black font-sans text-binance-light flex flex-col antialiased selection:bg-binance-yellow selection:text-binance-black">
-      {/* LOGIN MODAL OVERLAY */}
-      {showLoginModal && (
-        <Login
-          users={state.users}
-          onLoginSuccess={handleUserLoggedIn}
-          isModal={true}
-          onCloseModal={() => setShowLoginModal(false)}
-        />
-      )}
-
-      {/* HEADER */}
-      <header className="bg-binance-dark border-b border-binance-border shrink-0 sticky top-0 z-50 shadow-md font-mono">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-binance-yellow to-amber-500 rounded-xl flex items-center justify-center text-binance-black font-extrabold tracking-wider font-display text-sm shadow-lg premium-glow-yellow">
-              ARX
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-display font-extrabold text-white text-base sm:text-lg tracking-tight">
-                  Arbitra<span className="text-binance-yellow">X</span>
-                </h1>
-                <span className="px-1.5 py-0.5 bg-binance-green/20 text-binance-green rounded text-[9px] font-bold tracking-wider uppercase">
-                  PRO SaaS
-                </span>
+    <RequireAuth>
+      <div className="min-h-screen bg-binance-black font-sans text-binance-light flex flex-col antialiased selection:bg-binance-yellow selection:text-binance-black">
+        {/* HEADER */}
+        <header className="bg-binance-dark border-b border-binance-border shrink-0 sticky top-0 z-50 shadow-md font-mono">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-binance-yellow to-amber-500 rounded-xl flex items-center justify-center text-binance-black font-extrabold tracking-wider font-display text-sm shadow-lg premium-glow-yellow">
+                ARX
               </div>
-              <span className="text-[10px] text-binance-gray block uppercase tracking-widest font-semibold">
-                Plataforma de Arbitraje P2P Multi-Organización
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* CURRENT USER BADGE */}
-            <div className="flex items-center gap-2.5 px-3 py-1.5 bg-binance-card border border-binance-border rounded-xl">
-              <div className="w-7 h-7 rounded-lg bg-binance-yellow/20 text-binance-yellow flex items-center justify-center font-bold text-xs uppercase">
-                {state.currentUser.name.charAt(0)}
-              </div>
-              <div className="text-left leading-tight">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-bold text-white max-w-[130px] truncate block">
-                    {state.currentUser.name}
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="font-display font-extrabold text-white text-base sm:text-lg tracking-tight">
+                    Arbitra<span className="text-binance-yellow">X</span>
+                  </h1>
+                  <span className="px-1.5 py-0.5 bg-binance-green/20 text-binance-green rounded text-[9px] font-bold tracking-wider uppercase">
+                    PRO SaaS
                   </span>
-                  {state.currentUser.role === 'SUPER_ADMIN' ? (
-                    <span className="px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded text-[9px] font-extrabold">SUPER ADMIN</span>
-                  ) : state.currentUser.role === 'ADMIN' ? (
-                    <span className="px-1.5 py-0.2 bg-blue-500/20 text-blue-300 rounded text-[9px] font-bold">ADMIN</span>
-                  ) : (
-                    <span className="px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded text-[9px] font-bold">VENDEDOR</span>
-                  )}
                 </div>
-                <span className="text-[10px] text-binance-gray block font-mono">
-                  @{state.currentUser.username}
+                <span className="text-[10px] text-binance-gray block uppercase tracking-widest font-semibold">
+                  Plataforma de Arbitraje P2P Multi-Organización
                 </span>
               </div>
             </div>
 
-            <button
-              onClick={() => setShowLoginModal(true)}
-              className="px-3 py-1.5 bg-binance-card hover:bg-binance-border text-binance-gray hover:text-white border border-binance-border rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-              title="Cambiar Usuario / Iniciar Sesión con otra cuenta"
-            >
-              <UserIcon className="w-3.5 h-3.5 text-binance-yellow" />
-              Cambiar Usuario
-            </button>
+            <div className="flex items-center gap-3">
+              {/* CURRENT USER BADGE */}
+              {currentUser && (
+                <div className="flex items-center gap-2.5 px-3 py-1.5 bg-binance-card border border-binance-border rounded-xl">
+                  <div className="w-7 h-7 rounded-lg bg-binance-yellow/20 text-binance-yellow flex items-center justify-center font-bold text-xs uppercase">
+                    {currentUser.name.charAt(0)}
+                  </div>
+                  <div className="text-left leading-tight">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-white max-w-[130px] truncate block">
+                        {currentUser.name}
+                      </span>
+                      {currentUser.role === 'SUPER_ADMIN' ? (
+                        <span className="px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded text-[9px] font-extrabold">SUPER ADMIN</span>
+                      ) : currentUser.role === 'ADMIN' ? (
+                        <span className="px-1.5 py-0.2 bg-blue-500/20 text-blue-300 rounded text-[9px] font-bold">ADMIN</span>
+                      ) : (
+                        <span className="px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded text-[9px] font-bold">VENDEDOR</span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-binance-gray block font-mono">
+                      @{currentUser.username}
+                    </span>
+                  </div>
+                </div>
+              )}
 
-            <button
-              onClick={handleLogout}
-              className="px-3 py-1.5 bg-binance-red/20 hover:bg-binance-red/30 text-binance-red border border-binance-red/40 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              Cerrar Sesión
-            </button>
+              <button
+                onClick={handleLogout}
+                className="px-3 py-1.5 bg-binance-red/20 hover:bg-binance-red/30 text-binance-red border border-binance-red/40 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Cerrar Sesión
+              </button>
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* BODY */}
-      <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col md:flex-row gap-6 font-mono">
-        {/* SIDEBAR NAVIGATION */}
-        <nav className="md:w-60 shrink-0 flex flex-row md:flex-col gap-1.5 overflow-x-auto md:overflow-visible pb-3 md:pb-0 scrollbar-none border-b md:border-b-0 border-binance-border -mx-4 px-4 sm:-mx-6 sm:px-6 md:mx-0 md:px-0">
-          {state.currentUser?.role === 'SUPER_ADMIN' ? (
-            <>
-              <div className="hidden md:block px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-xl mb-1 text-[10px] font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
-                <Crown className="w-3.5 h-3.5" /> Super Admin SaaS
-              </div>
+        {/* BODY */}
+        <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col md:flex-row gap-6 font-mono">
+          {/* SIDEBAR NAVIGATION */}
+          <nav className="md:w-60 shrink-0 flex flex-row md:flex-col gap-1.5 overflow-x-auto md:overflow-visible pb-3 md:pb-0 scrollbar-none border-b md:border-b-0 border-binance-border -mx-4 px-4 sm:-mx-6 sm:px-6 md:mx-0 md:px-0">
+            {isSuperAdmin ? (
+              <>
+                <div className="hidden md:block px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-xl mb-1 text-[10px] font-bold text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
+                  <Crown className="w-3.5 h-3.5" /> Super Admin SaaS
+                </div>
 
-              <button
-                onClick={() => setActiveTab('saas-dashboard')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'saas-dashboard' || activeTab === 'saas-admin' ? 'bg-amber-500/20 text-amber-300 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <LayoutDashboard className="w-4 h-4 text-amber-400" />
-                Dashboard
-              </button>
+                <button
+                  onClick={() => setActiveTab('saas-dashboard')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'saas-dashboard' || activeTab === 'saas-admin' ? 'bg-amber-500/20 text-amber-300 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <LayoutDashboard className="w-4 h-4 text-amber-400" />
+                  Dashboard
+                </button>
 
-              <button
-                onClick={() => setActiveTab('saas-organizaciones')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'saas-organizaciones' ? 'bg-amber-500/20 text-amber-300 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <Building2 className="w-4 h-4 text-amber-400" />
-                Organizaciones
-              </button>
+                <button
+                  onClick={() => setActiveTab('saas-organizaciones')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'saas-organizaciones' ? 'bg-amber-500/20 text-amber-300 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <Building2 className="w-4 h-4 text-amber-400" />
+                  Organizaciones
+                </button>
 
-              <button
-                onClick={() => setActiveTab('saas-administradores')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'saas-administradores' ? 'bg-amber-500/20 text-amber-300 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <Users className="w-4 h-4 text-sky-400" />
-                Administradores
-              </button>
+                <button
+                  onClick={() => setActiveTab('saas-administradores')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'saas-administradores' ? 'bg-amber-500/20 text-amber-300 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <Users className="w-4 h-4 text-sky-400" />
+                  Administradores
+                </button>
 
-              <button
-                onClick={() => setActiveTab('saas-suscripciones')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'saas-suscripciones' ? 'bg-amber-500/20 text-amber-300 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <CreditCard className="w-4 h-4 text-binance-yellow" />
-                Suscripciones
-              </button>
+                <button
+                  onClick={() => setActiveTab('saas-suscripciones')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'saas-suscripciones' ? 'bg-amber-500/20 text-amber-300 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <CreditCard className="w-4 h-4 text-binance-yellow" />
+                  Suscripciones
+                </button>
 
-              <button
-                onClick={() => setActiveTab('saas-configuracion')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'saas-configuracion' ? 'bg-amber-500/20 text-amber-300 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <Settings className="w-4 h-4 text-amber-400" />
-                Configuración
-              </button>
+                <button
+                  onClick={() => setActiveTab('saas-configuracion')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'saas-configuracion' ? 'bg-amber-500/20 text-amber-300 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <Settings className="w-4 h-4 text-amber-400" />
+                  Configuración
+                </button>
 
-              <div className="pt-3 border-t border-binance-border/40 mt-2">
+                <div className="pt-3 border-t border-binance-border/40 mt-2">
+                  <button
+                    onClick={() => setActiveTab('dashboard')}
+                    className="w-full text-left flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold text-binance-gray hover:text-white hover:bg-binance-card transition-all cursor-pointer"
+                  >
+                    👁 Vista Terminal Cliente
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
                 <button
                   onClick={() => setActiveTab('dashboard')}
-                  className="w-full text-left flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold text-binance-gray hover:text-white hover:bg-binance-card transition-all cursor-pointer"
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'dashboard' ? 'bg-binance-card text-binance-yellow border-l-2 border-binance-yellow' : 'text-binance-gray hover:text-white'
+                  }`}
                 >
-                  👁 Vista Terminal Cliente
+                  <LayoutDashboard className="w-4 h-4 text-binance-yellow" />
+                  Dashboard
                 </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => setActiveTab('dashboard')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'dashboard' ? 'bg-binance-card text-binance-yellow border-l-2 border-binance-yellow' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <LayoutDashboard className="w-4 h-4 text-binance-yellow" />
-                Dashboard
-              </button>
 
-              <button
-                onClick={() => setActiveTab('movimientos')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'movimientos' ? 'bg-binance-card text-white border-l-2 border-binance-gray' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <RefreshCw className="w-4 h-4 text-binance-gray" />
-                Movimientos
-              </button>
+                <button
+                  onClick={() => setActiveTab('movimientos')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'movimientos' ? 'bg-binance-card text-white border-l-2 border-binance-gray' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <RefreshCw className="w-4 h-4 text-binance-gray" />
+                  Movimientos
+                </button>
 
-              <button
-                onClick={() => setActiveTab('billeteras')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'billeteras' ? 'bg-binance-card text-binance-yellow border-l-2 border-binance-yellow' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <WalletCards className="w-4 h-4 text-binance-yellow" />
-                Billeteras
-              </button>
+                <button
+                  onClick={() => setActiveTab('billeteras')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'billeteras' ? 'bg-binance-card text-binance-yellow border-l-2 border-binance-yellow' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <WalletCards className="w-4 h-4 text-binance-yellow" />
+                  Billeteras
+                </button>
 
-              <button
-                onClick={() => setActiveTab('exchanges')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'exchanges' ? 'bg-binance-card text-binance-green border-l-2 border-binance-green' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <Coins className="w-4 h-4 text-binance-green" />
-                Exchanges
-              </button>
+                <button
+                  onClick={() => setActiveTab('exchanges')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'exchanges' ? 'bg-binance-card text-binance-green border-l-2 border-binance-green' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <Coins className="w-4 h-4 text-binance-green" />
+                  Exchanges
+                </button>
 
-              <button
-                onClick={() => setActiveTab('vendedores')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'vendedores' ? 'bg-binance-card text-binance-yellow border-l-2 border-binance-yellow' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <UserIcon className="w-4 h-4 text-binance-yellow" />
-                Vendedores
-              </button>
+                {!isVendedor && (
+                  <button
+                    onClick={() => setActiveTab('vendedores')}
+                    className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      activeTab === 'vendedores' ? 'bg-binance-card text-binance-yellow border-l-2 border-binance-yellow' : 'text-binance-gray hover:text-white'
+                    }`}
+                  >
+                    <UserIcon className="w-4 h-4 text-binance-yellow" />
+                    Vendedores
+                  </button>
+                )}
 
-              <button
-                onClick={() => setActiveTab('fondos')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'fondos' ? 'bg-binance-card text-amber-400 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <DollarSign className="w-4 h-4 text-amber-400" />
-                Fondo / Inyecciones
-              </button>
+                <button
+                  onClick={() => setActiveTab('fondos')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'fondos' ? 'bg-binance-card text-amber-400 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <DollarSign className="w-4 h-4 text-amber-400" />
+                  Fondo / Inyecciones
+                </button>
 
-              <button
-                onClick={() => setActiveTab('calculadora')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'calculadora' ? 'bg-binance-card text-binance-green border-l-2 border-binance-green' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <Calculator className="w-4 h-4 text-binance-green" />
-                Calculadora P2P
-              </button>
+                <button
+                  onClick={() => setActiveTab('calculadora')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'calculadora' ? 'bg-binance-card text-binance-green border-l-2 border-binance-green' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <Calculator className="w-4 h-4 text-binance-green" />
+                  Calculadora P2P
+                </button>
 
-              <button
-                onClick={() => setActiveTab('reportes')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'reportes' ? 'bg-binance-card text-sky-400 border-l-2 border-sky-400' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <BarChart3 className="w-4 h-4 text-sky-400" />
-                Métricas y Reportes
-              </button>
+                {!isVendedor && (
+                  <button
+                    onClick={() => setActiveTab('reportes')}
+                    className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      activeTab === 'reportes' ? 'bg-binance-card text-sky-400 border-l-2 border-sky-400' : 'text-binance-gray hover:text-white'
+                    }`}
+                  >
+                    <BarChart3 className="w-4 h-4 text-sky-400" />
+                    Métricas y Reportes
+                  </button>
+                )}
 
-              <button
-                onClick={() => setActiveTab('cierre')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'cierre' ? 'bg-binance-card text-amber-400 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <Clock className="w-4 h-4 text-amber-400" />
-                Cierre de Jornada
-              </button>
+                <button
+                  onClick={() => setActiveTab('cierre')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'cierre' ? 'bg-binance-card text-amber-400 border-l-2 border-amber-400' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <Clock className="w-4 h-4 text-amber-400" />
+                  Cierre de Jornada
+                </button>
 
-              <button
-                onClick={() => setActiveTab('notificaciones')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'notificaciones' ? 'bg-binance-card text-binance-yellow border-l-2 border-binance-yellow' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <Bell className="w-4 h-4 text-binance-yellow" />
-                Notificaciones
-              </button>
+                <button
+                  onClick={() => setActiveTab('notificaciones')}
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'notificaciones' ? 'bg-binance-card text-binance-yellow border-l-2 border-binance-yellow' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  <Bell className="w-4 h-4 text-binance-yellow" />
+                  Notificaciones
+                </button>
 
-              <button
-                onClick={() => setActiveTab('supabase-db')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'supabase-db' ? 'bg-binance-card text-emerald-400 border-l-2 border-emerald-400' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <Database className="w-4 h-4 text-emerald-400" />
-                Base de Datos Supabase
-              </button>
+                {!isVendedor && (
+                  <button
+                    onClick={() => setActiveTab('ajustes')}
+                    className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      activeTab === 'ajustes' ? 'bg-binance-card text-binance-gray border-l-2 border-binance-gray' : 'text-binance-gray hover:text-white'
+                    }`}
+                  >
+                    <Settings className="w-4 h-4 text-binance-gray" />
+                    Ajustes
+                  </button>
+                )}
+              </>
+            )}
+          </nav>
 
-              <button
-                onClick={() => setActiveTab('ajustes')}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'ajustes' ? 'bg-binance-card text-binance-gray border-l-2 border-binance-gray' : 'text-binance-gray hover:text-white'
-                }`}
-              >
-                <Settings className="w-4 h-4 text-binance-gray" />
-                Ajustes
-              </button>
-            </>
-          )}
-        </nav>
+          {/* MAIN DISPLAY AREA */}
+          <main className="flex-1 min-w-0">
+            {(activeTab.startsWith('saas-') || activeTab === 'saas-admin') && isSuperAdmin && (
+              <SaasAdmin
+                organizations={state.organizations || []}
+                users={state.users}
+                currentUser={currentUser as any}
+                onUpdateOrganizations={handleUpdateOrganizations}
+                onAddOrganization={handleAddOrganization}
+                onAddUser={handleAddUser}
+                onUpdateUsers={handleUpdateUsers}
+                activeSection={activeTab.replace('saas-', '')}
+                onSectionChange={(sec) => setActiveTab(`saas-${sec}`)}
+              />
+            )}
 
-        {/* MAIN DISPLAY AREA */}
-        <main className="flex-1 min-w-0">
-          {activeTab === 'supabase-db' && (
-            <SupabaseManager
-              state={state}
-              onUpdateState={(newState) => setState(prev => ({ ...prev, ...newState }))}
-            />
-          )}
+            {activeTab === 'dashboard' && (
+              <Dashboard
+                wallets={state.wallets}
+                exchanges={state.exchanges}
+                transactions={state.transactions}
+                incomeExpenses={state.incomeExpenses}
+                activeShiftId={state.activeShiftId}
+                activeShift={activeShift}
+                currentUser={currentUser as any}
+                users={state.users}
+                onSelectTab={(tab) => setActiveTab(tab)}
+              />
+            )}
 
-          {(activeTab.startsWith('saas-') || activeTab === 'saas-admin') && (
-            <SaasAdmin
-              organizations={state.organizations || []}
-              users={state.users}
-              currentUser={state.currentUser}
-              onUpdateOrganizations={handleUpdateOrganizations}
-              onAddOrganization={handleAddOrganization}
-              onAddUser={handleAddUser}
-              onUpdateUsers={handleUpdateUsers}
-              activeSection={activeTab.replace('saas-', '')}
-              onSectionChange={(sec) => setActiveTab(`saas-${sec}`)}
-            />
-          )}
+            {activeTab === 'movimientos' && (
+              <Movimientos
+                transactions={state.transactions}
+                wallets={state.wallets}
+                exchanges={state.exchanges}
+                users={state.users}
+                currentUser={currentUser as any}
+                onClearTransactions={handleClearTransactions}
+                onAddTransaction={handleAddTransaction}
+              />
+            )}
 
-          {activeTab === 'dashboard' && (
-            <Dashboard
-              wallets={state.wallets}
-              exchanges={state.exchanges}
-              transactions={state.transactions}
-              incomeExpenses={state.incomeExpenses}
-              activeShiftId={state.activeShiftId}
-              activeShift={activeShift}
-              currentUser={state.currentUser}
-              users={state.users}
-              onSelectTab={(tab) => setActiveTab(tab)}
-            />
-          )}
+            {activeTab === 'billeteras' && (
+              <Billeteras
+                wallets={state.wallets}
+                transactions={state.transactions}
+                users={state.users}
+                activeShiftId={state.activeShiftId}
+                onFundWallet={handleFundWallet}
+                onAddWallet={handleAddWallet}
+                onUpdateWallet={handleUpdateWallet}
+              />
+            )}
 
-          {activeTab === 'movimientos' && (
-            <Movimientos
-              transactions={state.transactions}
-              wallets={state.wallets}
-              exchanges={state.exchanges}
-              users={state.users}
-              currentUser={state.currentUser}
-              onClearTransactions={handleClearTransactions}
-              onAddTransaction={handleAddTransaction}
-            />
-          )}
+            {activeTab === 'exchanges' && (
+              <Exchanges
+                exchanges={state.exchanges}
+                users={state.users}
+                currentUser={currentUser as any}
+                onAddExchange={handleAddExchange}
+                onUpdateExchangeBalance={handleUpdateExchangeBalance}
+              />
+            )}
 
-          {activeTab === 'billeteras' && (
-            <Billeteras
-              wallets={state.wallets}
-              transactions={state.transactions}
-              users={state.users}
-              activeShiftId={state.activeShiftId}
-              onFundWallet={handleFundWallet}
-              onAddWallet={handleAddWallet}
-              onUpdateWallet={handleUpdateWallet}
-            />
-          )}
+            {activeTab === 'vendedores' && !isVendedor && (
+              <VendedoresManager
+                users={state.users}
+                currentUser={currentUser as any}
+                onAddUser={handleAddUser}
+                onDeleteUser={handleDeleteUser}
+              />
+            )}
 
-          {activeTab === 'exchanges' && (
-            <Exchanges
-              exchanges={state.exchanges}
-              users={state.users}
-              currentUser={state.currentUser}
-              onAddExchange={handleAddExchange}
-              onUpdateExchangeBalance={handleUpdateExchangeBalance}
-            />
-          )}
+            {activeTab === 'fondos' && (
+              <Fondos
+                wallets={state.wallets}
+                exchanges={state.exchanges}
+                incomeExpenses={state.incomeExpenses}
+                currentUser={currentUser as any}
+                users={state.users}
+                activeShiftId={state.activeShiftId}
+                onAddIncomeExpense={handleAddIncomeExpense}
+              />
+            )}
 
-          {activeTab === 'vendedores' && (
-            <VendedoresManager
-              users={state.users}
-              currentUser={state.currentUser}
-              onAddUser={handleAddUser}
-              onDeleteUser={handleDeleteUser}
-            />
-          )}
+            {activeTab === 'calculadora' && (
+              <CalculadoraP2P
+                p2pCalcs={state.p2pCalcs}
+                wallets={state.wallets}
+                onAddP2PCalc={handleAddP2PCalc}
+                onAddTransaction={handleAddTransaction}
+                activeShiftId={state.activeShiftId}
+              />
+            )}
 
-          {activeTab === 'fondos' && (
-            <Fondos
-              wallets={state.wallets}
-              exchanges={state.exchanges}
-              incomeExpenses={state.incomeExpenses}
-              currentUser={state.currentUser}
-              users={state.users}
-              activeShiftId={state.activeShiftId}
-              onAddIncomeExpense={handleAddIncomeExpense}
-            />
-          )}
+            {activeTab === 'reportes' && !isVendedor && (
+              <Reportes
+                transactions={state.transactions}
+                incomeExpenses={state.incomeExpenses}
+                users={state.users}
+                currentUser={currentUser as any}
+                activeShiftId={state.activeShiftId}
+                activeShift={activeShift}
+              />
+            )}
 
-          {activeTab === 'calculadora' && (
-            <CalculadoraP2P
-              p2pCalcs={state.p2pCalcs}
-              wallets={state.wallets}
-              onAddP2PCalc={handleAddP2PCalc}
-              onAddTransaction={handleAddTransaction}
-              activeShiftId={state.activeShiftId}
-            />
-          )}
+            {activeTab === 'cierre' && (
+              <TurnosControl
+                shifts={state.shifts}
+                activeShift={activeShift}
+                wallets={state.wallets}
+                exchanges={state.exchanges}
+                incomeExpenses={state.incomeExpenses}
+                transactions={state.transactions}
+                users={state.users}
+                currentOperator={currentUser?.name || state.currentOperator}
+                onStartShift={handleStartShift}
+                onEndShift={handleEndShift}
+              />
+            )}
 
-          {activeTab === 'reportes' && (
-            <Reportes
-              transactions={state.transactions}
-              incomeExpenses={state.incomeExpenses}
-              users={state.users}
-              currentUser={state.currentUser}
-              activeShiftId={state.activeShiftId}
-              activeShift={activeShift}
-            />
-          )}
+            {activeTab === 'notificaciones' && (
+              <Notificaciones
+                wallets={state.wallets}
+                exchanges={state.exchanges}
+                transactions={state.transactions}
+              />
+            )}
 
-          {activeTab === 'cierre' && (
-            <TurnosControl
-              shifts={state.shifts}
-              activeShift={activeShift}
-              wallets={state.wallets}
-              exchanges={state.exchanges}
-              incomeExpenses={state.incomeExpenses}
-              transactions={state.transactions}
-              users={state.users}
-              currentOperator={state.currentUser?.name || state.currentOperator}
-              onStartShift={handleStartShift}
-              onEndShift={handleEndShift}
-            />
-          )}
+            {activeTab === 'ajustes' && !isVendedor && (
+              <Ajustes
+                currentUser={currentUser as any}
+                onClearData={handleClearTransactions}
+              />
+            )}
+          </main>
+        </div>
 
-          {activeTab === 'notificaciones' && (
-            <Notificaciones
-              wallets={state.wallets}
-              exchanges={state.exchanges}
-              transactions={state.transactions}
-            />
-          )}
-
-          {activeTab === 'ajustes' && (
-            <Ajustes
-              currentUser={state.currentUser}
-              onClearData={handleClearTransactions}
-            />
-          )}
-        </main>
+        <footer className="bg-binance-dark border-t border-binance-border text-center py-4 text-[10px] text-binance-gray font-mono">
+          &copy; 2026 ArbitraX &bull; Plataforma SaaS de Arbitraje P2P &bull; Todos los derechos reservados
+        </footer>
       </div>
-
-      <footer className="bg-binance-dark border-t border-binance-border text-center py-4 text-[10px] text-binance-gray font-mono">
-        &copy; 2026 ArbitraX &bull; Plataforma SaaS de Arbitraje P2P &bull; Todos los derechos reservados
-      </footer>
-    </div>
+    </RequireAuth>
   );
 }
+

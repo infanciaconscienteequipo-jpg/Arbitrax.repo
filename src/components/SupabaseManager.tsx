@@ -5,14 +5,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { AppState } from '../types';
-import {
-  supabase,
-  SUPABASE_URL,
-  SUPABASE_ANON_KEY,
-  checkSupabaseConnection,
-  fetchAppStateFromSupabase,
-  seedSupabaseWithInitialData
-} from '../lib/supabase';
+import { supabase } from '../lib/supabase';
+import { dashboardService } from '../services/dashboard.service';
+
+const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
 import {
   Database,
   CheckCircle2,
@@ -50,7 +47,7 @@ export default function SupabaseManager({ state, onUpdateState }: SupabaseManage
 
   const handleCheckConnection = async () => {
     setLoading(true);
-    const res = await checkSupabaseConnection();
+    const res = await dashboardService.checkConnection();
     setConnectionStatus(res);
     setLoading(false);
   };
@@ -61,7 +58,7 @@ export default function SupabaseManager({ state, onUpdateState }: SupabaseManage
 
   const handleSeedSupabase = async () => {
     setLoading(true);
-    const ok = await seedSupabaseWithInitialData(state);
+    const ok = await dashboardService.seedInitialData(state);
     if (ok) {
       alert('¡Datos sincronizados e insertados exitosamente en Supabase!');
       await handleCheckConnection();
@@ -73,7 +70,7 @@ export default function SupabaseManager({ state, onUpdateState }: SupabaseManage
 
   const handleFetchFromSupabase = async () => {
     setLoading(true);
-    const fetched = await fetchAppStateFromSupabase();
+    const fetched = await dashboardService.fetchAppState();
     if (fetched) {
       onUpdateState(fetched);
       alert('¡Estado actualizado desde Supabase con éxito!');
@@ -93,7 +90,7 @@ export default function SupabaseManager({ state, onUpdateState }: SupabaseManage
   const FULL_SQL_SCRIPT = `-- =====================================================================
 -- ARQUITECTURA DE BASE DE DATOS PROFESIONAL POSTGRESQL PARA SUPABASE
 -- Proyecto: ArbitraX - P2P Binance & Crypto OTC Management System
--- URL Supabase: https://avukgqasfnwjomzgmtbk.supabase.co
+-- URL Supabase: ${SUPABASE_URL || 'Configurada vía VITE_SUPABASE_URL'}
 -- =====================================================================
 
 -- 0. HABILITAR EXTENSIONES UUID
@@ -112,7 +109,7 @@ END;
 $$ language 'plpgsql';
 
 -- =====================================================================
--- 2. TABLA: ORGANIZATIONS (Empresas / Subscripciones SaaS)
+-- 2. TABLA: ORGANIZATIONS (Empresas / Organizaciones SaaS)
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS public.organizations (
     id TEXT PRIMARY KEY DEFAULT 'org-' || gen_random_uuid()::text,
@@ -121,14 +118,17 @@ CREATE TABLE IF NOT EXISTS public.organizations (
     country TEXT DEFAULT 'Argentina',
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'disabled')),
     active BOOLEAN DEFAULT true,
-    plan TEXT DEFAULT 'Enterprise Pro',
-    max_users INTEGER DEFAULT 10 CHECK (max_users > 0),
-    monthly_fee NUMERIC(15, 2) DEFAULT 0,
+    monthly_fee NUMERIC(15, 2) NOT NULL DEFAULT 120000.00,
     subscription_expires_at TIMESTAMPTZ,
     feature_flags JSONB DEFAULT '{"p2pCalculator": true, "shiftClosing": true, "advancedReports": true, "customCryptos": true, "auditLogs": true}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Migración / Edición en caso de que la tabla ya exista en Supabase
+ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS monthly_fee NUMERIC(15, 2) DEFAULT 120000;
+ALTER TABLE public.organizations DROP COLUMN IF EXISTS max_users;
+ALTER TABLE public.organizations DROP COLUMN IF EXISTS plan;
 
 -- Trigger updated_at organizations
 DROP TRIGGER IF EXISTS set_updated_at_organizations ON public.organizations;
@@ -365,10 +365,10 @@ CREATE POLICY "Permitir todo en p2p_arbitrages" ON public.p2p_arbitrages FOR ALL
 -- =====================================================================
 -- 12. DATOS DE PRUEBA Y SEMILLA (SEED DATA INICIAL)
 -- =====================================================================
-INSERT INTO public.organizations (id, name, tax_id, country, status, plan, max_users, monthly_fee)
+INSERT INTO public.organizations (id, name, tax_id, country, status, monthly_fee)
 VALUES 
-  ('org-1', 'ArbitraX Capital Partners S.A.', '30-71628391-4', 'Argentina', 'active', 'Enterprise Pro', 10, 250),
-  ('org-2', 'CriptoGlobal P2P SRL', '30-88492019-2', 'Argentina', 'active', 'Pro SaaS', 5, 120)
+  ('org-1', 'ArbitraX Capital Partners S.A.', '30-71628391-4', 'Argentina', 'active', 250000),
+  ('org-2', 'CriptoGlobal P2P SRL', '30-88492019-2', 'Argentina', 'active', 120000)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.users (id, username, name, email, password_hash, role, organization_id)

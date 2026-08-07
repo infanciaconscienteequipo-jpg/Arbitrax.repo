@@ -5,6 +5,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Organization, User } from '../types';
+import { authService } from '../services/auth.service';
 import {
   Crown,
   Building2,
@@ -54,37 +55,7 @@ interface SaasAdminProps {
   onSectionChange?: (section: string) => void;
 }
 
-interface SaasPlan {
-  id: string;
-  name: string;
-  monthlyFee: number;
-  maxUsers: number;
-  features: string[];
-}
 
-const DEFAULT_PLANS: SaasPlan[] = [
-  {
-    id: 'plan-starter',
-    name: 'Starter',
-    monthlyFee: 50000,
-    maxUsers: 3,
-    features: ['Calculadora P2P', 'Control de Billeteras', 'Reportes Básicos ARS'],
-  },
-  {
-    id: 'plan-pro',
-    name: 'Pro SaaS',
-    monthlyFee: 120000,
-    maxUsers: 5,
-    features: ['Calculadora P2P', 'Control de Billeteras', 'Cierre de Jornada', 'Monedas Personalizadas'],
-  },
-  {
-    id: 'plan-enterprise',
-    name: 'Enterprise Pro',
-    monthlyFee: 250000,
-    maxUsers: 15,
-    features: ['Todas las Funciones', 'Reportes Avanzados BI', 'Auditoría Completa', 'Soporte 24/7 Dedicado'],
-  },
-];
 
 export default function SaasAdmin({
   organizations,
@@ -141,7 +112,6 @@ export default function SaasAdmin({
     monthlyFee: 120000,
     fechaIngreso: new Date().toISOString().substring(0, 10),
     status: 'active' as 'active' | 'suspended',
-    plan: 'Pro SaaS',
   });
 
   // Settings State
@@ -251,7 +221,6 @@ export default function SaasAdmin({
       monthlyFee: 120000,
       fechaIngreso: new Date().toISOString().substring(0, 10),
       status: 'active',
-      plan: 'Pro SaaS',
     });
     setShowCreateModal(true);
   };
@@ -269,7 +238,6 @@ export default function SaasAdmin({
       monthlyFee: org.monthlyFee || 120000,
       fechaIngreso: org.fechaIngreso || org.createdAt || new Date().toISOString().substring(0, 10),
       status: org.status === 'active' ? 'active' : 'suspended',
-      plan: org.plan || 'Pro SaaS',
     });
     setShowCreateModal(true);
   };
@@ -318,7 +286,7 @@ export default function SaasAdmin({
   };
 
   // Submit Form Create / Edit Organization
-  const handleSubmitForm = (e: React.FormEvent) => {
+  const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.orgName.trim() || !formData.email.trim()) return;
 
@@ -334,7 +302,6 @@ export default function SaasAdmin({
             fechaIngreso: formData.fechaIngreso,
             status: formData.status,
             active: formData.status === 'active',
-            plan: formData.plan,
           };
         }
         return o;
@@ -361,7 +328,7 @@ export default function SaasAdmin({
 
       alert(`Organización "${formData.orgName}" actualizada correctamente.`);
     } else {
-      // Create New Organization + Admin User
+      // Create New Organization + Admin User via Supabase Auth Admin & RPCs
       const newOrgId = `org-${Date.now()}`;
       const newOrg: Organization = {
         id: newOrgId,
@@ -369,8 +336,6 @@ export default function SaasAdmin({
         adminName: formData.adminName.trim() || 'Administrador',
         status: formData.status,
         active: formData.status === 'active',
-        plan: formData.plan,
-        maxUsers: 10,
         monthlyFee: Number(formData.monthlyFee) || 120000,
         createdAt: formData.fechaIngreso,
         fechaIngreso: formData.fechaIngreso,
@@ -385,22 +350,18 @@ export default function SaasAdmin({
         },
       };
 
-      const newAdminUser: User = {
-        id: `u-${Date.now()}`,
-        name: formData.adminName.trim() || 'Admin Organización',
+      const createdAdmin = await authService.createUser({
         email: formData.email.trim().toLowerCase(),
+        password: formData.password || 'Arbitrax.2006',
+        name: formData.adminName.trim() || 'Admin Organización',
         username: formData.email.trim().toLowerCase().split('@')[0],
         role: 'ADMIN',
-        password: formData.password || 'Arbitrax.2006',
         organization_id: newOrgId,
-        status: formData.status === 'active' ? 'active' : 'disabled',
-        active: formData.status === 'active',
-        lastLogin: new Date().toISOString().substring(0, 10),
-      };
+      });
 
       onAddOrganization(newOrg);
-      onAddUser(newAdminUser);
-      alert(`Organización "${newOrg.name}" y Administrador creados exitosamente.`);
+      onAddUser(createdAdmin);
+      alert(`Organización "${newOrg.name}" y Administrador creados exitosamente con Supabase.`);
     }
 
     setShowCreateModal(false);
@@ -1106,40 +1067,39 @@ export default function SaasAdmin({
             </div>
           </div>
 
-          {/* SaaS Plans Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {DEFAULT_PLANS.map(plan => {
-              const countOnPlan = organizations.filter(o => o.plan === plan.name).length;
-              return (
-                <div
-                  key={plan.id}
-                  className="bg-binance-card border border-binance-border p-6 rounded-3xl space-y-4 hover:border-binance-yellow/50 transition-all shadow-lg"
-                >
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h4 className="text-lg font-black text-white">{plan.name}</h4>
-                      <p className="text-xs text-binance-gray mt-0.5">Hasta {plan.maxUsers} usuarios</p>
-                    </div>
-                    <span className="px-2.5 py-1 rounded-full bg-binance-yellow/10 text-binance-yellow text-[10px] font-black border border-binance-yellow/30">
-                      {countOnPlan} Organizaciones
-                    </span>
-                  </div>
+          {/* SaaS Revenue Metrics Summary */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-binance-card border border-binance-border p-5 rounded-2xl space-y-1 shadow-lg">
+              <span className="text-[10px] text-binance-gray uppercase font-extrabold tracking-wider">Recaudación Mensual (MRR)</span>
+              <div className="text-xl font-black text-amber-400">
+                {formatMoneyARS(monthlyRevenueARS)}
+              </div>
+              <p className="text-[10px] text-binance-gray">Facturación de org. activas</p>
+            </div>
 
-                  <div className="text-2xl font-black text-amber-400">
-                    {formatMoneyARS(plan.monthlyFee)} <span className="text-xs font-normal text-binance-gray">/ mes</span>
-                  </div>
+            <div className="bg-binance-card border border-binance-border p-5 rounded-2xl space-y-1 shadow-lg">
+              <span className="text-[10px] text-binance-gray uppercase font-extrabold tracking-wider">Organizaciones Registradas</span>
+              <div className="text-xl font-black text-white">
+                {organizations.length} <span className="text-xs font-normal text-binance-green">({activeOrgs} Activas)</span>
+              </div>
+              <p className="text-[10px] text-binance-gray">Sin límite de usuarios</p>
+            </div>
 
-                  <ul className="space-y-2 pt-2 border-t border-binance-border/40 text-xs text-binance-gray">
-                    {plan.features.map((f, idx) => (
-                      <li key={idx} className="flex items-center gap-2">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-binance-green shrink-0" />
-                        <span>{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              );
-            })}
+            <div className="bg-binance-card border border-binance-border p-5 rounded-2xl space-y-1 shadow-lg">
+              <span className="text-[10px] text-binance-gray uppercase font-extrabold tracking-wider">Cuota Promedio por Org</span>
+              <div className="text-xl font-black text-sky-400">
+                {formatMoneyARS(activeOrgs ? Math.round(monthlyRevenueARS / activeOrgs) : 0)}
+              </div>
+              <p className="text-[10px] text-binance-gray">Precio promedio en ARS</p>
+            </div>
+
+            <div className="bg-binance-card border border-binance-border p-5 rounded-2xl space-y-1 shadow-lg">
+              <span className="text-[10px] text-binance-gray uppercase font-extrabold tracking-wider">Límite de Usuarios</span>
+              <div className="text-xl font-black text-binance-green">
+                Ilimitado
+              </div>
+              <p className="text-[10px] text-binance-gray">Acceso total para operadores</p>
+            </div>
           </div>
 
           {/* Subscriptions Billing Breakdown Table */}
@@ -1385,33 +1345,18 @@ export default function SaasAdmin({
               </div>
 
               {/* Estado de la Organización */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
-                    Estado Inicial
-                  </label>
-                  <select
-                    value={formData.status}
-                    onChange={e => setFormData({ ...formData, status: e.target.value as 'active' | 'suspended' })}
-                    className="w-full px-3 py-2.5 bg-binance-card border border-binance-border rounded-xl text-white font-bold outline-hidden focus:border-binance-yellow"
-                  >
-                    <option value="active" className="text-binance-green font-bold">🟢 Activa (Acceso Permitido)</option>
-                    <option value="suspended" className="text-binance-red font-bold">🔴 Suspendida (Acceso Bloqueado)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">Plan SaaS</label>
-                  <select
-                    value={formData.plan}
-                    onChange={e => setFormData({ ...formData, plan: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow"
-                  >
-                    <option value="Starter">Starter ($50k ARS/m)</option>
-                    <option value="Pro SaaS">Pro SaaS ($120k ARS/m)</option>
-                    <option value="Enterprise Pro">Enterprise Pro ($250k ARS/m)</option>
-                  </select>
-                </div>
+              <div>
+                <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                  Estado Inicial
+                </label>
+                <select
+                  value={formData.status}
+                  onChange={e => setFormData({ ...formData, status: e.target.value as 'active' | 'suspended' })}
+                  className="w-full px-3 py-2.5 bg-binance-card border border-binance-border rounded-xl text-white font-bold outline-hidden focus:border-binance-yellow"
+                >
+                  <option value="active" className="text-binance-green font-bold">🟢 Activa (Acceso Permitido)</option>
+                  <option value="suspended" className="text-binance-red font-bold">🔴 Suspendida (Acceso Bloqueado)</option>
+                </select>
               </div>
 
               <button

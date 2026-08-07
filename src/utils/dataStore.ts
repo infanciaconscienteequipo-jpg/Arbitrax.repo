@@ -48,44 +48,7 @@ export const DEFAULT_EXCHANGES: ExchangeAccount[] = [
   { id: 'okx-main', name: 'OKX Pro', balanceCrypto: 600, vendorId: 'u-3', vendorName: 'Carla Benítez', organization_id: 'org-1' },
 ];
 
-export const DEFAULT_USERS: User[] = [
-  {
-    id: 'u-super-1',
-    email: 'arbitrax19@gmail.com',
-    username: 'superadmin',
-    name: 'Super Admin ArbitraX',
-    password: 'Arbitrax.2006',
-    role: 'SUPER_ADMIN',
-    organization_id: null
-  },
-  {
-    id: 'u-1',
-    email: 'admiarbitrax1@gmail.com',
-    username: 'admin',
-    name: 'Administrador Principal',
-    password: 'Arbitrax.2006',
-    role: 'ADMIN',
-    organization_id: 'org-1'
-  },
-  {
-    id: 'u-2',
-    email: 'roberto.g@arbitrax.com',
-    username: 'roberto.g',
-    name: 'Roberto Gómez (Vendedor)',
-    password: 'Arbitrax.2006',
-    role: 'VENDEDOR',
-    organization_id: 'org-1'
-  },
-  {
-    id: 'u-3',
-    email: 'carla.b@arbitrax.com',
-    username: 'carla.b',
-    name: 'Carla Benítez (Vendedor)',
-    password: 'Arbitrax.2006',
-    role: 'VENDEDOR',
-    organization_id: 'org-1'
-  },
-];
+export const DEFAULT_USERS: User[] = [];
 
 const INITIAL_TRANSACTIONS: Transaction[] = [
   {
@@ -118,7 +81,7 @@ const INITIAL_TRANSACTIONS: Transaction[] = [
     walletName: 'Lemon Cash',
     operator: 'Martin P2P',
     client: 'Juan Gomez',
-    gain: 2500, // (1245 - 1220) * 100
+    gain: 2500,
     notes: 'Venta por transferencia bancaria',
   },
   {
@@ -190,9 +153,9 @@ export function getInitialState(): AppState {
       p2pCalcs: INITIAL_P2P,
       shifts: INITIAL_SHIFTS,
       activeShiftId: null,
-      currentOperator: 'Roberto Gómez',
-      users: DEFAULT_USERS,
-      currentUser: DEFAULT_USERS[0],
+      currentOperator: '',
+      users: [],
+      currentUser: null as any,
     };
   }
 
@@ -200,62 +163,13 @@ export function getInitialState(): AppState {
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
-      // Ensure basic keys are intact
-      if (parsed.wallets && parsed.transactions) {
-        if (!parsed.exchanges || parsed.exchanges.length === 0) {
-          parsed.exchanges = DEFAULT_EXCHANGES;
-        }
-        if (!parsed.incomeExpenses) {
-          parsed.incomeExpenses = [];
-        }
-
-        if (!parsed.organizations || parsed.organizations.length === 0) {
-          parsed.organizations = DEFAULT_ORGANIZATIONS;
-        } else {
-          DEFAULT_ORGANIZATIONS.forEach(defOrg => {
-            if (!parsed.organizations.some((o: Organization) => o.id === defOrg.id)) {
-              parsed.organizations.push(defOrg);
-            }
-          });
-        }
-
-        if (!parsed.users || parsed.users.length === 0) {
-          parsed.users = DEFAULT_USERS;
-        } else {
-          // Merge default users (Super Admin, Admins) if not present
-          DEFAULT_USERS.forEach(defUser => {
-            const index = parsed.users.findIndex((u: User) =>
-              u.id === defUser.id ||
-              (u.email && defUser.email && u.email.toLowerCase() === defUser.email.toLowerCase()) ||
-              (u.username && defUser.username && u.username.toLowerCase() === defUser.username.toLowerCase())
-            );
-            if (index === -1) {
-              parsed.users.push(defUser);
-            } else {
-              // Ensure role and password match default if updated
-              parsed.users[index] = {
-                ...parsed.users[index],
-                email: parsed.users[index].email || defUser.email,
-                role: defUser.role,
-                password: parsed.users[index].password || defUser.password,
-              };
-            }
-          });
-        }
-
-        if (!parsed.currentUser) {
-          parsed.currentUser = parsed.users[0] || DEFAULT_USERS[0];
-        } else {
-          // Sync current user role/email
-          const currentInList = parsed.users.find((u: User) => u.username === parsed.currentUser.username || u.email === parsed.currentUser.email);
-          if (currentInList) {
-            parsed.currentUser = currentInList;
-          } else {
-            parsed.currentUser = parsed.users[0] || DEFAULT_USERS[0];
-          }
-        }
-        return parsed;
-      }
+      delete parsed.currentUser;
+      delete parsed.users;
+      return {
+        ...parsed,
+        users: [],
+        currentUser: null,
+      };
     }
   } catch (e) {
     console.error('Failed to load local storage state:', e);
@@ -271,22 +185,26 @@ export function getInitialState(): AppState {
     p2pCalcs: INITIAL_P2P,
     shifts: INITIAL_SHIFTS,
     activeShiftId: null,
-    currentOperator: 'Roberto Gómez',
-    users: DEFAULT_USERS,
-    currentUser: DEFAULT_USERS[0],
+    currentOperator: '',
+    users: [],
+    currentUser: null as any,
   };
-  saveState(state);
   return state;
 }
 
 export function saveState(state: AppState): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state));
+    // Clean user credentials before writing to localStorage
+    const cleanState = { ...state };
+    delete (cleanState as any).currentUser;
+    delete (cleanState as any).users;
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cleanState));
   } catch (e) {
     console.error('Failed to save state to local storage:', e);
   }
 }
+
 
 /**
  * Calculates the current weighted average buy price of a cryptocurrency.

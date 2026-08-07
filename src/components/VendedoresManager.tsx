@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { User } from '../types';
+import { authService } from '../services/auth.service';
 import { UserCheck, Plus, Trash2, ShieldAlert, Key, UserX } from 'lucide-react';
 
 interface VendedoresManagerProps {
@@ -27,7 +28,7 @@ export default function VendedoresManager({
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!username.trim() || !name.trim() || !password.trim()) {
@@ -42,22 +43,31 @@ export default function VendedoresManager({
       return;
     }
 
-    const newUser: User = {
-      username: cleanUsername,
-      name: name.trim(),
-      password: password,
-      role,
-      organization_id: currentUser?.organization_id || 'org-1',
-    };
+    const email = cleanUsername.includes('@')
+      ? cleanUsername
+      : `${cleanUsername}@${currentUser?.organization_id || 'org1'}.arbitrax.com`;
 
-    onAddUser(newUser);
-    setSuccessMsg(`✅ Vendedor ${name.trim()} registrado exitosamente.`);
-    setUsername('');
-    setName('');
-    setPassword('');
-    setErrorMsg('');
+    try {
+      const createdUser = await authService.createUser({
+        email,
+        password: password.trim(),
+        name: name.trim(),
+        username: cleanUsername,
+        role: role.toUpperCase(),
+        organization_id: currentUser?.organization_id || 'org-1',
+      });
 
-    setTimeout(() => setSuccessMsg(''), 5000);
+      onAddUser(createdUser);
+      setSuccessMsg(`✅ Vendedor ${name.trim()} registrado exitosamente con Supabase.`);
+      setUsername('');
+      setName('');
+      setPassword('');
+      setErrorMsg('');
+
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Error al registrar vendedor en Supabase.');
+    }
   };
 
   return (

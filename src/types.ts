@@ -11,14 +11,14 @@ export interface Organization {
   country?: string;
   status: 'active' | 'suspended' | 'disabled';
   active?: boolean;
-  plan: string;
-  maxUsers: number;
-  monthlyFee: number;
+  plan?: string;
+  maxUsers?: number;
+  monthlyFee: number; // Precio de Venta / Cuota Mensual ARS
   createdAt: string;
   fechaIngreso?: string;
-  subscriptionExpiresAt: string;
+  subscriptionExpiresAt?: string;
   lastLogin?: string;
-  featureFlags: {
+  featureFlags?: {
     p2pCalculator: boolean;
     shiftClosing: boolean;
     advancedReports: boolean;
