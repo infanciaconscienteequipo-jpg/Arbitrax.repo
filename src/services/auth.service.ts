@@ -449,17 +449,10 @@ export const authService = {
   },
 
   /**
-   * Eliminar vendedor ejecutando EXCLUSIVAMENTE la RPC rpc_delete_seller.
+   * Archivar/Desactivar vendedor (Soft Delete) ejecutando EXCLUSIVAMENTE la RPC rpc_delete_seller.
+   * No elimina registros físicamente ni llama a auth.users deletion.
    */
   async deleteSeller(userId: string): Promise<boolean> {
-    try {
-      await supabase.functions.invoke('delete-user', {
-        body: { user_id: userId },
-      });
-    } catch (edgeErr) {
-      console.warn('Edge Function delete-user no disponible:', edgeErr);
-    }
-
     const { error } = await supabase.rpc('rpc_delete_seller', {
       p_user_id: userId,
     });

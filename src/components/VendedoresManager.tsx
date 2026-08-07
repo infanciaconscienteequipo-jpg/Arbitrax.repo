@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
 import { authService } from '../services/auth.service';
-import { UserCheck, Plus, Trash2, ShieldAlert, Edit2, Check, X, RefreshCw, Mail } from 'lucide-react';
+import { UserCheck, Plus, Archive, ShieldAlert, Edit2, Check, X, RefreshCw, Mail } from 'lucide-react';
 
 interface VendedoresManagerProps {
   users: User[];
@@ -30,6 +30,7 @@ export default function VendedoresManager({
   const [successMsg, setSuccessMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const [sellers, setSellers] = useState<User[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
 
   // Estado para edición en línea
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -153,8 +154,8 @@ export default function VendedoresManager({
     }
   };
 
-  const handleDelete = async (seller: User) => {
-    if (!confirm('¿Desea desactivar este vendedor?')) {
+  const handleArchive = async (seller: User) => {
+    if (!confirm('¿Desea archivar este vendedor?\nNo podrá iniciar sesión, pero todas sus operaciones permanecerán registradas.')) {
       return;
     }
     setLoading(true);
@@ -164,13 +165,13 @@ export default function VendedoresManager({
       const sellerId = seller.id || seller.username;
       const ok = await authService.deleteSeller(sellerId);
       if (ok) {
-        setSuccessMsg('Vendedor eliminado correctamente.');
+        setSuccessMsg('Vendedor archivado correctamente.');
         if (onDeleteUser) onDeleteUser(seller.username);
         await loadSellersFromSupabase();
         setTimeout(() => setSuccessMsg(''), 4000);
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Error al eliminar vendedor.');
+      setErrorMsg(err?.message || 'Error al archivar vendedor.');
     } finally {
       setLoading(false);
     }
@@ -355,127 +356,148 @@ export default function VendedoresManager({
 
         {/* Listado de Vendedores desde Supabase */}
         <div className="lg:col-span-2 bg-binance-card border border-binance-border rounded-2xl p-6 shadow-xl space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-wrap justify-between items-center gap-2">
             <h2 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
-              Vendedores Activos en Supabase ({sellers.length})
+              Vendedores {showArchived ? 'Registrados' : 'Activos'} en Supabase (
+              {sellers.filter((u) => (showArchived ? true : u.active !== false && u.status === 'active')).length}
+              )
             </h2>
-            <span className="text-[10px] text-binance-gray font-mono">
-              Org: <span className="text-binance-yellow font-bold">{currentUser?.organization_id || 'Sin Org'}</span>
-            </span>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 text-xs font-mono text-binance-gray cursor-pointer hover:text-white select-none">
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(e) => setShowArchived(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-binance-yellow rounded cursor-pointer"
+                />
+                <span>Mostrar vendedores archivados</span>
+              </label>
+              <span className="text-[10px] text-binance-gray font-mono">
+                Org: <span className="text-binance-yellow font-bold">{currentUser?.organization_id || 'Sin Org'}</span>
+              </span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {sellers.map((u) => {
-              const isSelf = currentUser?.username === u.username;
-              const isEditing = editingId === u.id;
+            {sellers
+              .filter((u) => (showArchived ? true : u.active !== false && u.status === 'active'))
+              .map((u) => {
+                const isSelf = currentUser?.username === u.username;
+                const isEditing = editingId === u.id;
+                const isActive = u.active !== false && u.status === 'active';
 
-              return (
-                <div
-                  key={u.id || u.username}
-                  className={`p-4 rounded-xl border flex flex-col justify-between gap-3 transition-colors ${
-                    isSelf 
-                      ? 'bg-binance-yellow/5 border-binance-yellow/40 premium-glow-yellow' 
-                      : 'bg-binance-black/40 border-binance-border hover:border-binance-yellow/30'
-                  }`}
-                >
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-start">
-                      <div className="space-y-1">
-                        {isEditing ? (
-                          <input
-                            type="text"
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            className="px-2 py-1 bg-binance-black border border-binance-yellow rounded text-sm text-white font-bold w-full"
-                          />
-                        ) : (
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-bold text-white font-display">{u.name}</span>
-                            {isSelf && (
-                              <span className="px-1.5 py-0.5 bg-binance-yellow text-binance-black rounded text-[8px] font-bold tracking-widest uppercase font-mono">
-                                TÚ
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        <span className="text-[10px] text-binance-gray block font-mono">
-                          Usuario: <span className="text-white">{u.username}</span>
+                return (
+                  <div
+                    key={u.id || u.username}
+                    className={`p-4 rounded-xl border flex flex-col justify-between gap-3 transition-colors ${
+                      isSelf 
+                        ? 'bg-binance-yellow/5 border-binance-yellow/40 premium-glow-yellow' 
+                        : 'bg-binance-black/40 border-binance-border hover:border-binance-yellow/30'
+                    }`}
+                  >
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-1">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              className="px-2 py-1 bg-binance-black border border-binance-yellow rounded text-sm text-white font-bold w-full"
+                            />
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-bold text-white font-display">{u.name}</span>
+                              {isSelf && (
+                                <span className="px-1.5 py-0.5 bg-binance-yellow text-binance-black rounded text-[8px] font-bold tracking-widest uppercase font-mono">
+                                  TÚ
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          <span className="text-[10px] text-binance-gray block font-mono">
+                            Usuario: <span className="text-white">{u.username}</span>
+                          </span>
+                        </div>
+
+                        <span className="px-2 py-0.5 rounded text-[9px] font-extrabold tracking-widest uppercase font-mono bg-binance-green/10 text-binance-green border border-binance-green/20">
+                          {u.role || 'SELLER'}
                         </span>
                       </div>
 
-                      <span className="px-2 py-0.5 rounded text-[9px] font-extrabold tracking-widest uppercase font-mono bg-binance-green/10 text-binance-green border border-binance-green/20">
-                        {u.role || 'SELLER'}
+                      <div className="text-[10px] font-mono text-binance-gray">
+                        {isEditing ? (
+                          <input
+                            type="email"
+                            value={editEmail}
+                            onChange={(e) => setEditEmail(e.target.value)}
+                            className="px-2 py-1 bg-binance-black border border-binance-yellow rounded text-xs text-white font-mono w-full mt-1"
+                          />
+                        ) : (
+                          <div className="flex items-center gap-1 text-binance-gray">
+                            <Mail className="w-3 h-3 text-binance-yellow shrink-0" />
+                            <span className="text-white truncate">{u.email || 'Sin correo'}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between items-center pt-2 border-t border-binance-border/50 text-[10px]">
+                      <span className="text-binance-gray font-mono">
+                        Estado:{' '}
+                        {isActive ? (
+                          <span className="text-binance-green font-bold">Activo</span>
+                        ) : (
+                          <span className="text-binance-red font-bold">Archivado</span>
+                        )}
                       </span>
-                    </div>
 
-                    <div className="text-[10px] font-mono text-binance-gray">
-                      {isEditing ? (
-                        <input
-                          type="email"
-                          value={editEmail}
-                          onChange={(e) => setEditEmail(e.target.value)}
-                          className="px-2 py-1 bg-binance-black border border-binance-yellow rounded text-xs text-white font-mono w-full mt-1"
-                        />
-                      ) : (
-                        <div className="flex items-center gap-1 text-binance-gray">
-                          <Mail className="w-3 h-3 text-binance-yellow shrink-0" />
-                          <span className="text-white truncate">{u.email || 'Sin correo'}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex justify-between items-center pt-2 border-t border-binance-border/50 text-[10px]">
-                    <span className="text-binance-gray font-mono">
-                      Estado: <span className="text-binance-green font-bold">Activo</span>
-                    </span>
-
-                    <div className="flex items-center gap-1.5">
-                      {isEditing ? (
-                        <>
-                          <button
-                            onClick={() => saveEdit(u)}
-                            className="text-binance-green hover:bg-binance-green/20 p-1 rounded transition-all cursor-pointer flex items-center gap-1 font-mono"
-                            title="Guardar cambios"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            <span>Guardar</span>
-                          </button>
-                          <button
-                            onClick={cancelEdit}
-                            className="text-binance-gray hover:text-white p-1 rounded transition-all cursor-pointer flex items-center gap-1 font-mono"
-                            title="Cancelar"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => startEdit(u)}
-                            className="text-binance-yellow hover:bg-binance-yellow/10 p-1 rounded transition-all cursor-pointer flex items-center gap-1 font-mono"
-                            title="Editar en Supabase"
-                          >
-                            <Edit2 className="w-3 h-3" />
-                          </button>
-
-                          {!isSelf && (
+                      <div className="flex items-center gap-1.5">
+                        {isEditing ? (
+                          <>
                             <button
-                              onClick={() => handleDelete(u)}
-                              className="text-binance-red hover:text-red-400 p-1 bg-red-500/10 hover:bg-red-500/20 rounded-md transition-all cursor-pointer flex items-center gap-1 font-mono"
-                              title="Eliminar de Supabase"
+                              onClick={() => saveEdit(u)}
+                              className="text-binance-green hover:bg-binance-green/20 p-1 rounded transition-all cursor-pointer flex items-center gap-1 font-mono"
+                              title="Guardar cambios"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Eliminar</span>
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Guardar</span>
                             </button>
-                          )}
-                        </>
-                      )}
+                            <button
+                              onClick={cancelEdit}
+                              className="text-binance-gray hover:text-white p-1 rounded transition-all cursor-pointer flex items-center gap-1 font-mono"
+                              title="Cancelar"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => startEdit(u)}
+                              className="text-binance-yellow hover:bg-binance-yellow/10 p-1 rounded transition-all cursor-pointer flex items-center gap-1 font-mono"
+                              title="Editar en Supabase"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+
+                            {!isSelf && isActive && (
+                              <button
+                                onClick={() => handleArchive(u)}
+                                className="text-binance-red hover:text-red-400 p-1 bg-red-500/10 hover:bg-red-500/20 rounded-md transition-all cursor-pointer flex items-center gap-1 font-mono"
+                                title="Archivar vendedor"
+                              >
+                                <Archive className="w-3.5 h-3.5" />
+                                <span>Archivar</span>
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
 
             {sellers.length === 0 && !loading && (
               <div className="col-span-2 py-8 text-center text-binance-gray text-xs font-mono space-y-2">
