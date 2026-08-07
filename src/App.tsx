@@ -86,6 +86,12 @@ export default function App() {
     }
   }, [authUser]);
 
+  useEffect(() => {
+    if (authUser && authUser.role !== 'SUPER_ADMIN' && activeTab.startsWith('saas-')) {
+      setActiveTab('dashboard');
+    }
+  }, [authUser, activeTab]);
+
   // Cargar datos remotos desde Supabase
   useEffect(() => {
     if (!authUser) return;

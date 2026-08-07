@@ -159,7 +159,7 @@ export default function VendedoresManager({
     }
     setLoading(true);
     try {
-      const ok = await authService.deleteUser(seller.id || seller.username);
+      const ok = await authService.deleteSeller(seller.id || seller.username);
       if (ok) {
         setSuccessMsg(`✅ Vendedor ${seller.name} eliminado de Supabase.`);
         if (onDeleteUser) onDeleteUser(seller.username);
@@ -194,12 +194,13 @@ export default function VendedoresManager({
     }
     setLoading(true);
     try {
-      const ok = await authService.updateUser(seller.id, {
+      const ok = await authService.updateSeller(seller.id, {
         name: editName.trim(),
         email: editEmail.trim().toLowerCase(),
+        username: seller.username,
       });
       if (ok) {
-        setSuccessMsg(`✅ Vendedor ${seller.username} actualizado en Supabase.`);
+        setSuccessMsg(`✅ Vendedor ${seller.username} actualizado mediante rpc_update_seller.`);
         cancelEdit();
         await loadSellersFromSupabase();
         setTimeout(() => setSuccessMsg(''), 4000);

@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(null);
         setUser(null);
         setOrganization(null);
-        setError('El usuario no existe o no tiene un perfil registrado en public.users.');
+        setError('El usuario autenticado no posee un perfil válido.');
         setLoading(false);
         return;
       }
@@ -79,10 +79,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      setUser(userProfile);
+      // 3. Validación de Organización (Obligatoria para ADMIN y SELLER)
+      if (userProfile.role !== 'SUPER_ADMIN') {
+        if (!userProfile.organization_id) {
+          console.warn('Usuario sin organización asignada');
+          await authService.logout();
+          setSession(null);
+          setUser(null);
+          setOrganization(null);
+          setError('Su cuenta no tiene asignada una organización válida.');
+          setLoading(false);
+          return;
+        }
 
-      // 3. Validación de Organización (si no es SUPER_ADMIN)
-      if (userProfile.role !== 'SUPER_ADMIN' && userProfile.organization_id) {
         const orgData = await organizationService.getById(userProfile.organization_id);
 
         if (!orgData || orgData.active === false || orgData.status !== 'active') {
@@ -108,6 +117,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         setOrganization(null);
       }
+
+      setUser(userProfile);
+
+      // 4. Logs de depuración exigidos
+      const targetRoute = userProfile.role === 'SUPER_ADMIN' ? '/saas' : '/dashboard';
+      console.log('=== DEBUG AUTH ===');
+      console.log('AUTH UID:', activeSession.user.id);
+      console.log('AUTH EMAIL:', activeSession.user.email);
+      console.log('PROFILE ID:', userProfile.id);
+      console.log('PROFILE ROLE:', userProfile.role);
+      console.log('PROFILE ORGANIZATION:', userProfile.organization_id);
+      console.log('RUTA DESTINO:', targetRoute);
+      console.log('==================');
     } catch (err: any) {
       console.error('Error al procesar la sesión de Supabase:', err);
       setError('Ocurrió un error al validar la sesión de usuario.');

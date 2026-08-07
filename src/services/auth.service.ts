@@ -124,7 +124,8 @@ export const authService = {
   },
 
   /**
-   * Consultar perfil del usuario en public.users
+   * Consultar perfil del usuario en public.users mediante auth_user_id = auth.uid()
+   * NUNCA asigna ni genera un rol por defecto si el registro no existe.
    */
   async getUserProfile(authUserId: string, email?: string): Promise<UserProfile | null> {
     try {
@@ -149,13 +150,20 @@ export const authService = {
 
       if (data) {
         if (!data.auth_user_id && authUserId) {
-          supabase.from('users').update({ auth_user_id: authUserId }).eq('id', data.id).then();
+          await supabase.from('users').update({ auth_user_id: authUserId }).eq('id', data.id);
         }
 
-        let userRole = (data.role || 'VENDEDOR').toUpperCase();
-        if (userRole === 'OPERATOR') userRole = 'VENDEDOR';
-        if (userRole === 'ADMINISTRADOR' || userRole === 'SUPERADMIN') {
-          userRole = userRole.replace('ADMINISTRADOR', 'ADMIN').replace('SUPERADMIN', 'SUPER_ADMIN');
+        const rawRole = (data.role || '').toUpperCase();
+        let userRole: 'SUPER_ADMIN' | 'ADMIN' | 'SELLER';
+
+        if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') {
+          userRole = 'SUPER_ADMIN';
+        } else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') {
+          userRole = 'ADMIN';
+        } else if (rawRole === 'SELLER' || rawRole === 'VENDEDOR' || rawRole === 'OPERATOR') {
+          userRole = 'SELLER';
+        } else {
+          userRole = 'SELLER';
         }
 
         return {
@@ -164,7 +172,7 @@ export const authService = {
           username: data.username || email?.split('@')[0] || 'usuario',
           name: data.name || data.username || 'Usuario',
           email: data.email || email,
-          role: userRole as any,
+          role: userRole,
           organization_id: data.organization_id || null,
           status: data.status || 'active',
           active: data.active !== false && data.status === 'active',
@@ -172,41 +180,10 @@ export const authService = {
         };
       }
 
-      const usernameFromEmail = email ? email.split('@')[0] : 'admin';
-      const defaultRole = 'SUPER_ADMIN';
-
-      const newProfile: UserProfile = {
-        id: authUserId,
-        auth_user_id: authUserId,
-        username: usernameFromEmail,
-        name: usernameFromEmail.toUpperCase(),
-        email: email || `${usernameFromEmail}@arbitrax.local`,
-        role: defaultRole as any,
-        organization_id: null,
-        status: 'active',
-        active: true,
-        lastLogin: new Date().toISOString()
-      };
-
-      try {
-        await supabase.from('users').upsert({
-          id: authUserId,
-          auth_user_id: authUserId,
-          username: newProfile.username,
-          name: newProfile.name,
-          email: newProfile.email,
-          role: defaultRole,
-          status: 'active',
-          active: true,
-          created_at: new Date().toISOString(),
-        });
-      } catch (upsertErr) {
-        console.warn('Upsert de usuario automático en public.users aviso:', upsertErr);
-      }
-
-      return newProfile;
+      // Si no existe perfil en public.users, retornar null (NUNCA asignar SUPER_ADMIN por defecto)
+      return null;
     } catch (err) {
-      console.error('Error fetching user profile:', err);
+      console.error('Error al obtener perfil de usuario de public.users:', err);
       return null;
     }
   },
@@ -442,6 +419,72 @@ export const authService = {
       active: true,
       password: cleanPassword,
     };
+  },
+
+  /**
+   * Actualizar datos del vendedor utilizando EXCLUSIVAMENTE la RPC rpc_update_seller.
+   * NUNCA utiliza supabase.from("users").update().
+   */
+  async updateSeller(userId: string, data: { name: string; email: string; username?: string }): Promise<boolean> {
+    const cleanName = data.name.trim();
+    const cleanEmail = data.email.trim().toLowerCase();
+    const cleanUsername = data.username ? data.username.trim().toLowerCase() : undefined;
+
+    // Ejecución exclusiva de rpc_update_seller
+    const { error: rpcErr } = await supabase.rpc('rpc_update_seller', {
+      p_user_id: userId,
+      p_name: cleanName,
+      p_email: cleanEmail,
+      p_username: cleanUsername,
+    });
+
+    if (rpcErr) {
+      console.warn('Error al ejecutar rpc_update_seller con p_user_id, intentando con p_id:', rpcErr.message);
+      const { error: fallbackErr } = await supabase.rpc('rpc_update_seller', {
+        p_id: userId,
+        p_name: cleanName,
+        p_email: cleanEmail,
+      });
+
+      if (fallbackErr) {
+        console.error('Error al ejecutar rpc_update_seller en Supabase:', fallbackErr.message);
+        throw new Error(`Error rpc_update_seller: ${fallbackErr.message}`);
+      }
+    }
+    return true;
+  },
+
+  /**
+   * Eliminar vendedor llamando a la Edge Function de auth (si existe) y luego ejecutando rpc_delete_seller.
+   */
+  async deleteSeller(userId: string): Promise<boolean> {
+    // 1. Invocar Edge Function de Supabase para eliminar usuario de auth.users si está configurada
+    try {
+      await supabase.functions.invoke('delete-user', {
+        body: { user_id: userId },
+      });
+    } catch (edgeErr) {
+      console.warn('Edge Function delete-user no disponible:', edgeErr);
+    }
+
+    // 2. Ejecutar rpc_delete_seller para eliminar el registro de public.users
+    const { error: rpcErr } = await supabase.rpc('rpc_delete_seller', {
+      p_user_id: userId,
+    });
+
+    if (rpcErr) {
+      console.warn('Error al ejecutar rpc_delete_seller con p_user_id, intentando con p_id:', rpcErr.message);
+      const { error: fallbackErr } = await supabase.rpc('rpc_delete_seller', {
+        p_id: userId,
+      });
+
+      if (fallbackErr) {
+        console.warn('Fallback rpc_delete_seller fallo, ejecutando deleteUser de respaldo:', fallbackErr.message);
+        return this.deleteUser(userId);
+      }
+    }
+
+    return true;
   },
 
   /**
