@@ -9,7 +9,7 @@ export const organizationService = {
     try {
       // Intentar RPC rpc_list_companies primero
       const { data: rpcData, error: rpcErr } = await supabase.rpc('rpc_list_companies');
-      if (!rpcErr && Array.isArray(rpcData)) {
+      if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
         return rpcData.map(mapOrgFromDB);
       }
     } catch (err) {
@@ -17,7 +17,7 @@ export const organizationService = {
     }
 
     // Fallback a select directo
-    const { data, error } = await supabase.from('organizations').select('*');
+    const { data, error } = await supabase.from('organizations').select('*').order('created_at', { ascending: false });
     if (error) {
       console.error('Error al listar organizaciones:', error.message);
       return [];
@@ -41,13 +41,12 @@ export const organizationService = {
     return mapOrgFromDB(data);
   },
 
-  async create(org: Organization): Promise<Organization> {
+  async create(org: Partial<Organization>): Promise<Organization> {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return org;
-
-    const dbOrg = mapOrgToDB(org);
+    if (!session) throw new Error('No hay sesión activa en Supabase');
 
     try {
+      // 1. Invocación de rpc_create_company
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_create_company', {
         p_name: org.name,
         p_tax_id: org.taxId || null,
@@ -55,19 +54,55 @@ export const organizationService = {
         p_status: org.status || 'active',
         p_monthly_fee: org.monthlyFee || 0,
       });
+
       if (!rpcErr && rpcRes) {
-        return typeof rpcRes === 'object' ? mapOrgFromDB(rpcRes) : org;
+        if (typeof rpcRes === 'object' && rpcRes.id) {
+          return mapOrgFromDB(rpcRes);
+        } else if (typeof rpcRes === 'string') {
+          const fetched = await this.getById(rpcRes);
+          if (fetched) return fetched;
+        }
       }
     } catch (err) {
-      console.warn('RPC rpc_create_company no disponible, realizando upsert directo.');
+      console.warn('RPC rpc_create_company no disponible, realizando insert directo en Supabase.');
     }
 
-    const { error } = await supabase.from('organizations').upsert(dbOrg);
-    if (error) {
-      console.error('Error al crear organización:', error.message);
-      throw error;
+    // 2. Insert directo en Supabase (dejar que Supabase genere UUID si no hay id real)
+    const payload: any = {
+      name: org.name,
+      tax_id: org.taxId || null,
+      country: org.country || 'Argentina',
+      status: org.status || 'active',
+      active: org.status === 'active',
+      monthly_fee: org.monthlyFee || 0,
+      subscription_expires_at: org.subscriptionExpiresAt || null,
+      feature_flags: org.featureFlags || {
+        p2pCalculator: true,
+        shiftClosing: true,
+        advancedReports: true,
+        customCryptos: true,
+        auditLogs: true,
+      },
+      created_at: org.createdAt || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (org.id && !org.id.startsWith('org-')) {
+      payload.id = org.id;
     }
-    return org;
+
+    const { data, error } = await supabase.from('organizations').insert(payload).select().single();
+    if (error) {
+      // Si falla insert (ej por id preexistente), probar upsert
+      const { data: upsertData, error: upsertErr } = await supabase.from('organizations').upsert(payload).select().single();
+      if (upsertErr) {
+        console.error('Error al crear organización en Supabase:', upsertErr.message);
+        throw upsertErr;
+      }
+      return mapOrgFromDB(upsertData);
+    }
+
+    return mapOrgFromDB(data);
   },
 
   async update(org: Organization): Promise<Organization> {
@@ -88,15 +123,51 @@ export const organizationService = {
         return org;
       }
     } catch (err) {
-      console.warn('RPC rpc_update_company no disponible, usando upsert directo.');
+      console.warn('RPC rpc_update_company no disponible, usando update directo.');
     }
 
-    const { error } = await supabase.from('organizations').upsert(dbOrg);
+    const { error } = await supabase
+      .from('organizations')
+      .update({
+        name: org.name,
+        tax_id: org.taxId || null,
+        status: org.status,
+        active: org.status === 'active',
+        monthly_fee: org.monthlyFee,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', org.id);
+
     if (error) {
-      console.error('Error al actualizar organización:', error.message);
+      console.error('Error al actualizar organización en Supabase:', error.message);
       throw error;
     }
     return org;
+  },
+
+  async delete(orgId: string): Promise<boolean> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return false;
+
+    try {
+      const { error: rpcErr } = await supabase.rpc('rpc_delete_company', { p_org_id: orgId });
+      if (!rpcErr) {
+        return true;
+      }
+    } catch (err) {
+      console.warn('RPC rpc_delete_company no disponible, eliminando directamente.');
+    }
+
+    // Eliminar o desvincular usuarios
+    await supabase.from('users').delete().eq('organization_id', orgId);
+
+    // Eliminar organización
+    const { error } = await supabase.from('organizations').delete().eq('id', orgId);
+    if (error) {
+      console.error('Error al eliminar organización:', error.message);
+      return false;
+    }
+    return true;
   },
 
   async sync(org: Organization): Promise<void> {

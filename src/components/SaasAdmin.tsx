@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Organization, User } from '../types';
 import { authService } from '../services/auth.service';
+import { organizationService } from '../services/organization.service';
 import {
   Crown,
   Building2,
@@ -44,22 +45,20 @@ import {
 } from 'lucide-react';
 
 interface SaasAdminProps {
-  organizations: Organization[];
-  users: User[];
-  currentUser: User | null;
-  onUpdateOrganizations: (orgs: Organization[]) => void;
-  onAddOrganization: (newOrg: Organization) => void;
-  onAddUser: (newUser: User) => void;
-  onUpdateUsers: (users: User[]) => void;
+  organizations?: Organization[];
+  users?: User[];
+  currentUser?: User | null;
+  onUpdateOrganizations?: (orgs: Organization[]) => void;
+  onAddOrganization?: (newOrg: Organization) => void;
+  onAddUser?: (newUser: User) => void;
+  onUpdateUsers?: (users: User[]) => void;
   activeSection?: string;
   onSectionChange?: (section: string) => void;
 }
 
-
-
 export default function SaasAdmin({
-  organizations,
-  users,
+  organizations = [],
+  users = [],
   currentUser,
   onUpdateOrganizations,
   onAddOrganization,
@@ -68,6 +67,37 @@ export default function SaasAdmin({
   activeSection = 'dashboard',
   onSectionChange,
 }: SaasAdminProps) {
+  // Datos remotos de Supabase
+  const [dbOrganizations, setDbOrganizations] = useState<Organization[]>([]);
+  const [dbUsers, setDbUsers] = useState<User[]>([]);
+  const [loadingData, setLoadingData] = useState<boolean>(false);
+
+  // Función para cargar/recargar datos directamente desde Supabase
+  const loadDataFromSupabase = async () => {
+    setLoadingData(true);
+    try {
+      const [fetchedOrgs, fetchedUsers] = await Promise.all([
+        organizationService.list(),
+        authService.listUsers(),
+      ]);
+      setDbOrganizations(fetchedOrgs);
+      setDbUsers(fetchedUsers);
+      if (onUpdateOrganizations) onUpdateOrganizations(fetchedOrgs);
+      if (onUpdateUsers) onUpdateUsers(fetchedUsers);
+    } catch (err) {
+      console.error("Error al cargar datos de Supabase en SaasAdmin:", err);
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDataFromSupabase();
+  }, []);
+
+  const organizationsList = dbOrganizations.length > 0 ? dbOrganizations : organizations;
+  const usersList = dbUsers.length > 0 ? dbUsers : users;
+
   // Local active tab fallback
   const [localTab, setLocalTab] = useState<'dashboard' | 'organizaciones' | 'administradores' | 'suscripciones' | 'configuracion'>('dashboard');
 
@@ -146,24 +176,24 @@ export default function SaasAdmin({
     return Math.max(1, totalMonths);
   };
 
-  // KPI Calculations
-  const activeOrgs = useMemo(() => organizations.filter(o => o.status === 'active').length, [organizations]);
-  const suspendedOrgs = useMemo(() => organizations.filter(o => o.status === 'suspended' || o.status === 'disabled').length, [organizations]);
+  // KPI Calculations desde datos reales de Supabase
+  const activeOrgs = useMemo(() => organizationsList.filter(o => o.status === 'active').length, [organizationsList]);
+  const suspendedOrgs = useMemo(() => organizationsList.filter(o => o.status === 'suspended' || o.status === 'disabled').length, [organizationsList]);
   
   const totalVendors = useMemo(() => {
-    return users.filter(u => u.role === 'VENDEDOR' || u.role === 'vendedor' || u.role === 'operator').length;
-  }, [users]);
+    return usersList.filter(u => u.role === 'VENDEDOR' || u.role === 'vendedor' || u.role === 'operator').length;
+  }, [usersList]);
 
   const totalAdmins = useMemo(() => {
-    return users.filter(u => u.role === 'ADMIN' || u.role === 'admin').length;
-  }, [users]);
+    return usersList.filter(u => u.role === 'ADMIN' || u.role === 'admin').length;
+  }, [usersList]);
 
   // Total Monthly Revenue in ARS from active organizations
   const monthlyRevenueARS = useMemo(() => {
-    return organizations
+    return organizationsList
       .filter(o => o.status === 'active')
       .reduce((sum, o) => sum + (o.monthlyFee || 0), 0);
-  }, [organizations]);
+  }, [organizationsList]);
 
   // New Organizations created in the current month
   const newOrgsThisMonth = useMemo(() => {
@@ -171,43 +201,56 @@ export default function SaasAdmin({
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
 
-    return organizations.filter(o => {
+    return organizationsList.filter(o => {
       const dateStr = o.createdAt || o.fechaIngreso;
       if (!dateStr) return false;
       const date = new Date(dateStr);
       return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
     }).length;
-  }, [organizations]);
+  }, [organizationsList]);
 
   // Helper: Count vendors per organization
   const getVendorCountForOrg = (orgId: string) => {
-    return users.filter(u => u.organization_id === orgId && (u.role === 'VENDEDOR' || u.role === 'vendedor' || u.role === 'operator')).length;
+    return usersList.filter(u => u.organization_id === orgId && (u.role === 'VENDEDOR' || u.role === 'vendedor' || u.role === 'operator')).length;
   };
 
   // Helper: Get linked admin for an organization
   const getAdminForOrg = (orgId: string) => {
-    return users.find(u => u.organization_id === orgId && (u.role === 'ADMIN' || u.role === 'admin'));
+    return usersList.find(u => u.organization_id === orgId && (u.role === 'ADMIN' || u.role === 'admin'));
   };
 
-  // Toggle active / suspended state
-  const handleToggleStatus = (orgId: string) => {
-    const targetOrg = organizations.find(o => o.id === orgId);
+  // Toggle active / suspended state en Supabase
+  const handleToggleStatus = async (orgId: string) => {
+    const targetOrg = organizationsList.find(o => o.id === orgId);
     if (!targetOrg) return;
 
     const newStatus: 'active' | 'suspended' = targetOrg.status === 'active' ? 'suspended' : 'active';
 
-    const updatedOrgs = organizations.map(o => (o.id === orgId ? { ...o, status: newStatus, active: newStatus === 'active' } : o));
-    onUpdateOrganizations(updatedOrgs);
+    setLoadingData(true);
+    try {
+      // Actualizar organización en Supabase
+      await organizationService.update({
+        ...targetOrg,
+        status: newStatus,
+        active: newStatus === 'active',
+      });
 
-    // Update all users belonging to this organization
-    const updatedUsers: User[] = users.map(u => {
-      if (u.organization_id === orgId && u.role !== 'SUPER_ADMIN') {
-        const userStatus: 'active' | 'disabled' = newStatus === 'active' ? 'active' : 'disabled';
-        return { ...u, status: userStatus, active: newStatus === 'active' };
+      // Actualizar todos los usuarios pertenecientes a la organización
+      const orgUsers = usersList.filter(u => u.organization_id === orgId && u.role !== 'SUPER_ADMIN');
+      for (const u of orgUsers) {
+        await authService.updateUser(u.id, {
+          status: newStatus === 'active' ? 'active' : 'disabled',
+          active: newStatus === 'active',
+        });
       }
-      return u;
-    });
-    onUpdateUsers(updatedUsers);
+
+      await loadDataFromSupabase();
+    } catch (err: any) {
+      console.error("Error al cambiar estado en Supabase:", err);
+      alert(`Error: ${err?.message || "No se pudo cambiar el estado en Supabase."}`);
+    } finally {
+      setLoadingData(false);
+    }
   };
 
   // Open Modal Create
@@ -251,152 +294,159 @@ export default function SaasAdmin({
     });
   };
 
-  // Save Edit Admin Data
-  const handleSaveEditAdmin = (e: React.FormEvent) => {
+  // Save Edit Admin Data en Supabase
+  const handleSaveEditAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!showEditAdminModal || !editAdminData.name.trim() || !editAdminData.email.trim()) return;
 
-    const updatedUsers = users.map(u => {
-      if (u.id === showEditAdminModal.id || u.username === showEditAdminModal.username) {
-        return {
-          ...u,
-          name: editAdminData.name.trim(),
-          email: editAdminData.email.trim().toLowerCase(),
-          username: editAdminData.email.trim().toLowerCase().split('@')[0],
-        };
-      }
-      return u;
-    });
+    setLoadingData(true);
+    try {
+      const cleanEmail = editAdminData.email.trim().toLowerCase();
+      const cleanUsername = cleanEmail.split('@')[0];
 
-    onUpdateUsers(updatedUsers);
-    
-    // Also sync adminName in Organization if linked
-    if (showEditAdminModal.organization_id) {
-      const updatedOrgs = organizations.map(o => {
-        if (o.id === showEditAdminModal.organization_id) {
-          return { ...o, adminName: editAdminData.name.trim() };
-        }
-        return o;
+      await authService.updateUser(showEditAdminModal.id, {
+        name: editAdminData.name.trim(),
+        email: cleanEmail,
+        username: cleanUsername,
       });
-      onUpdateOrganizations(updatedOrgs);
-    }
 
-    setShowEditAdminModal(null);
-    alert('Datos del Administrador actualizados con éxito.');
+      if (showEditAdminModal.organization_id) {
+        const org = organizationsList.find(o => o.id === showEditAdminModal.organization_id);
+        if (org) {
+          await organizationService.update({
+            ...org,
+            adminName: editAdminData.name.trim(),
+          });
+        }
+      }
+
+      await loadDataFromSupabase();
+      setShowEditAdminModal(null);
+      alert('Datos del Administrador actualizados con éxito en Supabase.');
+    } catch (err: any) {
+      console.error("Error al actualizar administrador:", err);
+      alert(`Error: ${err?.message || "No se pudo actualizar el administrador en Supabase."}`);
+    } finally {
+      setLoadingData(false);
+    }
   };
 
-  // Submit Form Create / Edit Organization
+  // Submit Form Create / Edit Organization en Supabase
   const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.orgName.trim() || !formData.email.trim()) return;
 
-    if (editingOrg) {
-      // Update Existing Organization
-      const updatedOrgs = organizations.map(o => {
-        if (o.id === editingOrg.id) {
-          return {
-            ...o,
-            name: formData.orgName.trim(),
-            adminName: formData.adminName.trim(),
-            monthlyFee: Number(formData.monthlyFee),
-            fechaIngreso: formData.fechaIngreso,
-            status: formData.status,
-            active: formData.status === 'active',
-          };
-        }
-        return o;
-      });
-      onUpdateOrganizations(updatedOrgs);
+    setLoadingData(true);
+    try {
+      if (editingOrg) {
+        // Actualizar Organización Existente en Supabase
+        await organizationService.update({
+          id: editingOrg.id,
+          name: formData.orgName.trim(),
+          adminName: formData.adminName.trim(),
+          monthlyFee: Number(formData.monthlyFee),
+          status: formData.status,
+          active: formData.status === 'active',
+          fechaIngreso: formData.fechaIngreso,
+          createdAt: editingOrg.createdAt || editingOrg.fechaIngreso || new Date().toISOString(),
+        });
 
-      // Update linked Admin user
-      const updatedUsers: User[] = users.map(u => {
-        if (u.organization_id === editingOrg.id && (u.role === 'ADMIN' || u.role === 'admin')) {
-          const userStatus: 'active' | 'disabled' = formData.status === 'active' ? 'active' : 'disabled';
-          return {
-            ...u,
-            name: formData.adminName.trim() || u.name,
+        // Actualizar usuario administrador vinculado
+        const linkedAdmin = getAdminForOrg(editingOrg.id);
+        if (linkedAdmin) {
+          await authService.updateUser(linkedAdmin.id, {
+            name: formData.adminName.trim() || linkedAdmin.name,
             email: formData.email.trim().toLowerCase(),
             username: formData.email.trim().toLowerCase().split('@')[0],
-            password: formData.password || u.password,
-            status: userStatus,
+            status: formData.status === 'active' ? 'active' : 'disabled',
             active: formData.status === 'active',
-          };
+          });
         }
-        return u;
-      });
-      onUpdateUsers(updatedUsers);
 
-      alert(`Organización "${formData.orgName}" actualizada correctamente.`);
-    } else {
-      // Create New Organization + Admin User via Supabase Auth Admin & RPCs
-      const newOrgId = `org-${Date.now()}`;
-      const newOrg: Organization = {
-        id: newOrgId,
-        name: formData.orgName.trim(),
-        adminName: formData.adminName.trim() || 'Administrador',
-        status: formData.status,
-        active: formData.status === 'active',
-        monthlyFee: Number(formData.monthlyFee) || 120000,
-        createdAt: formData.fechaIngreso,
-        fechaIngreso: formData.fechaIngreso,
-        subscriptionExpiresAt: '2026-12-31',
-        lastLogin: new Date().toISOString().substring(0, 10),
-        featureFlags: {
-          p2pCalculator: true,
-          shiftClosing: true,
-          advancedReports: true,
-          customCryptos: true,
-          auditLogs: true,
-        },
-      };
+        alert(`Organización "${formData.orgName}" actualizada correctamente en Supabase.`);
+      } else {
+        // 1. Crear Organización en Supabase
+        const createdOrg = await organizationService.create({
+          name: formData.orgName.trim(),
+          adminName: formData.adminName.trim() || 'Administrador',
+          monthlyFee: Number(formData.monthlyFee) || 120000,
+          status: formData.status,
+          active: formData.status === 'active',
+          country: 'Argentina',
+          createdAt: formData.fechaIngreso,
+          fechaIngreso: formData.fechaIngreso,
+        });
 
-      const createdAdmin = await authService.createUser({
-        email: formData.email.trim().toLowerCase(),
-        password: formData.password || 'Arbitrax.2006',
-        name: formData.adminName.trim() || 'Admin Organización',
-        username: formData.email.trim().toLowerCase().split('@')[0],
-        role: 'ADMIN',
-        organization_id: newOrgId,
-      });
+        // 2. Obtener la ID REAL devuelta por Supabase
+        const realOrgId = createdOrg.id;
 
-      onAddOrganization(newOrg);
-      onAddUser(createdAdmin);
-      alert(`Organización "${newOrg.name}" y Administrador creados exitosamente con Supabase.`);
+        // 3. Crear el Administrador en Supabase Auth y public.users con la ID REAL de la organización
+        await authService.createAdmin({
+          email: formData.email.trim().toLowerCase(),
+          password: formData.password || 'Arbitrax.2006',
+          name: formData.adminName.trim() || 'Admin Organización',
+          username: formData.email.trim().toLowerCase().split('@')[0],
+          organization_id: realOrgId,
+        });
+
+        alert(`Organización "${createdOrg.name}" y Administrador creados exitosamente en Supabase.`);
+      }
+
+      // 4. Recargar datos directamente desde Supabase
+      await loadDataFromSupabase();
+      setShowCreateModal(false);
+    } catch (err: any) {
+      console.error("Error en la operación de Supabase:", err);
+      alert(`Error: ${err?.message || "Ocurrió un error al procesar en Supabase."}`);
+    } finally {
+      setLoadingData(false);
     }
-
-    setShowCreateModal(false);
   };
 
-  // Confirm Delete Organization
-  const handleConfirmDeleteOrg = () => {
+  // Confirm Delete Organization en Supabase
+  const handleConfirmDeleteOrg = async () => {
     if (!orgToDelete) return;
-    onUpdateOrganizations(organizations.filter(o => o.id !== orgToDelete.id));
-    onUpdateUsers(users.filter(u => u.organization_id !== orgToDelete.id));
-    setOrgToDelete(null);
-    alert('Organización y usuarios asociados eliminados correctamente.');
+
+    setLoadingData(true);
+    try {
+      await organizationService.delete(orgToDelete.id);
+      await loadDataFromSupabase();
+      setOrgToDelete(null);
+      alert('Organización y usuarios asociados eliminados correctamente en Supabase.');
+    } catch (err: any) {
+      console.error("Error al eliminar organización:", err);
+      alert(`Error: ${err?.message || "No se pudo eliminar la organización."}`);
+    } finally {
+      setLoadingData(false);
+    }
   };
 
-  // Change Admin Password
-  const handleChangePasswordSubmit = (e: React.FormEvent) => {
+  // Change Admin Password en Supabase
+  const handleChangePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!showPassModal || !newPass.trim()) return;
 
-    const updatedUsers = users.map(u => {
-      if (u.id === showPassModal.id || u.username === showPassModal.username) {
-        return { ...u, password: newPass.trim() };
-      }
-      return u;
-    });
+    setLoadingData(true);
+    try {
+      await authService.updateUser(showPassModal.id, {
+        password: newPass.trim(),
+      });
 
-    onUpdateUsers(updatedUsers);
-    setShowPassModal(null);
-    setNewPass('Arbitrax.2006');
-    alert(`Contraseña para ${showPassModal.name} actualizada con éxito.`);
+      await loadDataFromSupabase();
+      setShowPassModal(null);
+      setNewPass('Arbitrax.2006');
+      alert(`Contraseña para ${showPassModal.name} actualizada con éxito en Supabase.`);
+    } catch (err: any) {
+      console.error("Error al actualizar contraseña:", err);
+      alert(`Error: ${err?.message || "No se pudo actualizar la contraseña."}`);
+    } finally {
+      setLoadingData(false);
+    }
   };
 
   // Filtered & Sorted Organizations List
   const filteredOrganizations = useMemo(() => {
-    return organizations.filter(org => {
+    return organizationsList.filter(org => {
       const linkedAdmin = getAdminForOrg(org.id);
       const search = searchTerm.toLowerCase().trim();
 
@@ -435,7 +485,7 @@ export default function SaasAdmin({
       if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [organizations, users, searchTerm, statusFilter, sortBy, sortOrder]);
+  }, [organizationsList, usersList, searchTerm, statusFilter, sortBy, sortOrder]);
 
   // Pagination calculation
   const totalPages = Math.ceil(filteredOrganizations.length / rowsPerPage) || 1;
@@ -496,6 +546,15 @@ export default function SaasAdmin({
           </div>
 
           <div className="flex flex-wrap items-center gap-3 font-mono">
+            <button
+              onClick={loadDataFromSupabase}
+              disabled={loadingData}
+              className="p-3 bg-binance-card border border-binance-border hover:border-binance-yellow text-binance-yellow rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+              title="Recargar datos de Supabase"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
+            </button>
+
             <button
               onClick={handleOpenCreate}
               className="px-5 py-3 bg-gradient-to-r from-binance-yellow to-amber-400 hover:from-binance-yellow/90 hover:to-amber-500 text-binance-black font-black text-xs rounded-xl transition-all cursor-pointer shadow-lg flex items-center gap-2 uppercase tracking-wider"
@@ -596,7 +655,7 @@ export default function SaasAdmin({
               </div>
 
               <div className="divide-y divide-binance-border/40">
-                {organizations.slice(0, 5).map(org => {
+                {organizationsList.slice(0, 5).map(org => {
                   const admin = getAdminForOrg(org.id);
                   const isAct = org.status === 'active';
                   return (
@@ -777,7 +836,7 @@ export default function SaasAdmin({
                     setSearchTerm('');
                     setStatusFilter('all');
                   }}
-                  className="px-3 py-1.5 bg-binance-yellow/20 text-binance-yellow rounded-lg text-xs font-bold"
+                  className="px-3 py-1.5 bg-binance-yellow/20 text-binance-yellow rounded-lg text-xs font-bold cursor-pointer"
                 >
                   Limpiar Filtros
                 </button>
@@ -861,7 +920,7 @@ export default function SaasAdmin({
 
                           {/* Last Access */}
                           <td className="p-3 text-center text-binance-gray text-[11px]">
-                            {org.lastLogin || admin?.lastLogin || 'Hoy 15:30'}
+                            {org.lastLogin || admin?.lastLogin || 'Hoy'}
                           </td>
 
                           {/* Actions */}
@@ -1006,10 +1065,10 @@ export default function SaasAdmin({
                 </tr>
               </thead>
               <tbody className="divide-y divide-binance-border/30">
-                {users
+                {usersList
                   .filter(u => u.role === 'ADMIN' || u.role === 'admin')
                   .map(admin => {
-                    const linkedOrg = organizations.find(o => o.id === admin.organization_id);
+                    const linkedOrg = organizationsList.find(o => o.id === admin.organization_id);
                     const isAct = admin.status === 'active' || admin.active !== false;
 
                     return (
@@ -1028,7 +1087,7 @@ export default function SaasAdmin({
                             </span>
                           )}
                         </td>
-                        <td className="p-3 text-center text-binance-gray">{admin.lastLogin || 'Hoy 14:00'}</td>
+                        <td className="p-3 text-center text-binance-gray">{admin.lastLogin || 'Hoy'}</td>
                         <td className="p-3 text-center">
                           <div className="flex items-center justify-center gap-1.5">
                             <button
@@ -1080,7 +1139,7 @@ export default function SaasAdmin({
             <div className="bg-binance-card border border-binance-border p-5 rounded-2xl space-y-1 shadow-lg">
               <span className="text-[10px] text-binance-gray uppercase font-extrabold tracking-wider">Organizaciones Registradas</span>
               <div className="text-xl font-black text-white">
-                {organizations.length} <span className="text-xs font-normal text-binance-green">({activeOrgs} Activas)</span>
+                {organizationsList.length} <span className="text-xs font-normal text-binance-green">({activeOrgs} Activas)</span>
               </div>
               <p className="text-[10px] text-binance-gray">Sin límite de usuarios</p>
             </div>
@@ -1121,7 +1180,7 @@ export default function SaasAdmin({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-binance-border/30">
-                  {organizations.map(org => {
+                  {organizationsList.map(org => {
                     const fechaStr = org.fechaIngreso || org.createdAt || '2026-01-01';
                     const monthsCount = calculateMonthsElapsed(fechaStr);
                     const totalInvoiced = monthsCount * (org.monthlyFee || 0);
@@ -1361,9 +1420,10 @@ export default function SaasAdmin({
 
               <button
                 type="submit"
-                className="w-full py-3 bg-gradient-to-r from-binance-yellow to-amber-400 text-binance-black font-black rounded-xl uppercase tracking-wider text-xs shadow-lg mt-4 cursor-pointer hover:from-binance-yellow/90 hover:to-amber-500"
+                disabled={loadingData}
+                className="w-full py-3 bg-gradient-to-r from-binance-yellow to-amber-400 text-binance-black font-black rounded-xl uppercase tracking-wider text-xs shadow-lg mt-4 cursor-pointer hover:from-binance-yellow/90 hover:to-amber-500 disabled:opacity-50"
               >
-                {editingOrg ? 'Guardar Cambios de Organización' : 'Crear Organización y Administrador'}
+                {loadingData ? 'Guardando en Supabase...' : (editingOrg ? 'Guardar Cambios de Organización' : 'Crear Organización y Administrador')}
               </button>
             </form>
           </div>
@@ -1413,9 +1473,10 @@ export default function SaasAdmin({
 
               <button
                 type="submit"
-                className="w-full py-2.5 bg-purple-500 text-white font-extrabold rounded-xl uppercase tracking-wider text-xs shadow-md mt-2 cursor-pointer hover:bg-purple-600"
+                disabled={loadingData}
+                className="w-full py-2.5 bg-purple-500 text-white font-extrabold rounded-xl uppercase tracking-wider text-xs shadow-md mt-2 cursor-pointer hover:bg-purple-600 disabled:opacity-50"
               >
-                Guardar Datos Admin
+                {loadingData ? 'Guardando en Supabase...' : 'Guardar Datos Admin'}
               </button>
             </form>
           </div>
@@ -1452,9 +1513,10 @@ export default function SaasAdmin({
 
               <button
                 type="submit"
-                className="w-full py-2.5 bg-amber-500 text-binance-black font-extrabold rounded-xl uppercase tracking-wider text-xs shadow-md mt-2 cursor-pointer hover:bg-amber-400"
+                disabled={loadingData}
+                className="w-full py-2.5 bg-amber-500 text-binance-black font-extrabold rounded-xl uppercase tracking-wider text-xs shadow-md mt-2 cursor-pointer hover:bg-amber-400 disabled:opacity-50"
               >
-                Actualizar Contraseña
+                {loadingData ? 'Actualizando...' : 'Actualizar Contraseña'}
               </button>
             </form>
           </div>
@@ -1471,7 +1533,7 @@ export default function SaasAdmin({
             </div>
 
             <p className="text-xs text-binance-gray leading-relaxed">
-              ¿Está seguro de que desea eliminar permanentemente la organización <strong className="text-white">{orgToDelete.name}</strong> y todos sus usuarios vinculados? Esta acción no se puede deshacer.
+              ¿Está seguro de que desea eliminar permanentemente la organización <strong className="text-white">{orgToDelete.name}</strong> y todos sus usuarios vinculados en Supabase? Esta acción no se puede deshacer.
             </p>
 
             <div className="flex gap-2 pt-2">
@@ -1483,9 +1545,10 @@ export default function SaasAdmin({
               </button>
               <button
                 onClick={handleConfirmDeleteOrg}
-                className="flex-1 py-2.5 bg-binance-red hover:bg-binance-red/90 text-white text-xs font-extrabold rounded-xl shadow-md cursor-pointer uppercase tracking-wider"
+                disabled={loadingData}
+                className="flex-1 py-2.5 bg-binance-red hover:bg-binance-red/90 text-white text-xs font-extrabold rounded-xl shadow-md cursor-pointer uppercase tracking-wider disabled:opacity-50"
               >
-                Eliminar
+                {loadingData ? 'Eliminando...' : 'Eliminar'}
               </button>
             </div>
           </div>

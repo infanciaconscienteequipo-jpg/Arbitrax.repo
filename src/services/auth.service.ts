@@ -96,7 +96,7 @@ export const authService = {
     }
 
     const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-      redirectTo: `${window.location.origin}/reset-password`,
+      redirectTo: `${import.meta.env.VITE_SUPABASE_URL}/reset-password`,
     });
 
     if (error) {
@@ -128,14 +128,12 @@ export const authService = {
    */
   async getUserProfile(authUserId: string, email?: string): Promise<UserProfile | null> {
     try {
-      // 1. Intentar por auth_user_id o id
       let { data, error } = await supabase
         .from('users')
         .select('*')
         .or(`auth_user_id.eq.${authUserId},id.eq.${authUserId}`)
         .maybeSingle();
 
-      // 2. Si no se encontró y tenemos email, buscar por email
       if ((!data || error) && email) {
         const emailSearch = await supabase
           .from('users')
@@ -149,9 +147,7 @@ export const authService = {
         }
       }
 
-      // 3. Si se encontró en public.users
       if (data) {
-        // Asegurar que auth_user_id esté vinculado en la base de datos
         if (!data.auth_user_id && authUserId) {
           supabase.from('users').update({ auth_user_id: authUserId }).eq('id', data.id).then();
         }
@@ -176,11 +172,9 @@ export const authService = {
         };
       }
 
-      // 4. Si NO existe aún en public.users pero está autenticado en Supabase Auth:
-      // Crear un perfil predeterminado (o Super Admin si su correo/meta lo indica o por defecto)
       const usernameFromEmail = email ? email.split('@')[0] : 'admin';
-      const defaultRole = 'SUPER_ADMIN'; // Si ingresó por Supabase Auth sin registro en public.users, le otorgamos SUPER_ADMIN
-      
+      const defaultRole = 'SUPER_ADMIN';
+
       const newProfile: UserProfile = {
         id: authUserId,
         auth_user_id: authUserId,
@@ -194,7 +188,6 @@ export const authService = {
         lastLogin: new Date().toISOString()
       };
 
-      // Intentar insertar en public.users
       try {
         await supabase.from('users').upsert({
           id: authUserId,
@@ -219,42 +212,58 @@ export const authService = {
   },
 
   /**
-   * Consultar organización del usuario en public.organizations
+   * Consultar lista de usuarios desde public.users en Supabase
    */
-  async getOrganization(organizationId: string): Promise<Organization | null> {
-    try {
-      const { data, error } = await supabase
-        .from('organizations')
-        .select('*')
-        .eq('id', organizationId)
-        .maybeSingle();
+  async listUsers(role?: string, organizationId?: string): Promise<User[]> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return [];
 
-      if (error || !data) {
-        console.warn('Error consultando la organización:', error?.message);
-        return null;
-      }
-
-      return {
-        id: data.id,
-        name: data.name,
-        taxId: data.tax_id,
-        country: data.country,
-        status: data.status || 'active',
-        active: data.active !== false && data.status === 'active',
-        monthlyFee: Number(data.monthly_fee || 0),
-        createdAt: data.created_at,
-        subscriptionExpiresAt: data.subscription_expires_at,
-        featureFlags: data.feature_flags || { p2pCalculator: true, shiftClosing: true, advancedReports: true, customCryptos: true, auditLogs: true }
-      };
-    } catch (err) {
-      console.error('Error fetching organization:', err);
-      return null;
+    let query = supabase.from('users').select('*').order('created_at', { ascending: false });
+    if (role) {
+      query = query.ilike('role', role);
     }
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('Error al listar usuarios desde Supabase:', error.message);
+      return [];
+    }
+
+    return (data || []).map((u: any) => ({
+      id: u.id,
+      username: u.username || u.email?.split('@')[0] || 'usuario',
+      name: u.name || u.username || 'Usuario',
+      email: u.email,
+      role: (u.role || 'VENDEDOR').toUpperCase(),
+      organization_id: u.organization_id || '',
+      status: u.status || 'active',
+      active: u.active !== false && u.status === 'active',
+      password: u.password,
+    }));
   },
 
   /**
-   * Crear un nuevo usuario (Administrador o Vendedor) llamando a la RPC o signUp de Supabase.
-   * Sin exponer ni utilizar Service Role desde React.
+   * Crear Administrador vinculado a una Organización real en Supabase (auth.users y public.users).
+   */
+  async createAdmin(params: {
+    email: string;
+    password?: string;
+    name: string;
+    username?: string;
+    organization_id: string;
+  }): Promise<UserProfile> {
+    return this.createUser({
+      ...params,
+      username: params.username || params.email.trim().toLowerCase().split('@')[0],
+      role: 'ADMIN',
+    });
+  },
+
+  /**
+   * Crear un nuevo usuario (Administrador o Vendedor) en Supabase.
    */
   async createUser(params: {
     email: string;
@@ -269,7 +278,7 @@ export const authService = {
     const cleanUsername = params.username.trim().toLowerCase();
     let authUserId: string | null = null;
 
-    // 1. Usar signUp de Supabase Auth
+    // 1. Crear usuario en auth.users vía signUp de Supabase Auth
     try {
       const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
         email: cleanEmail,
@@ -293,22 +302,19 @@ export const authService = {
       console.warn('Excepción al registrar usuario en Supabase Auth:', err);
     }
 
-    const assignedId = authUserId || `u-${Date.now()}`;
-
-    // 2. Invocación de RPCs de Supabase
+    // 2. Invocación de RPCs de Supabase (rpc_create_admin, create_user_profile, create_user)
     try {
-      const { error: rpcProfileErr } = await supabase.rpc('create_user_profile', {
-        p_auth_id: assignedId,
-        p_email: cleanEmail,
-        p_username: cleanUsername,
-        p_name: params.name,
-        p_role: params.role,
-        p_organization_id: params.organization_id,
-        p_password: cleanPassword,
-      });
-
-      if (rpcProfileErr) {
-        await supabase.rpc('create_user', {
+      if (params.role === 'ADMIN') {
+        await supabase.rpc('rpc_create_admin', {
+          p_email: cleanEmail,
+          p_password: cleanPassword,
+          p_name: params.name,
+          p_username: cleanUsername,
+          p_organization_id: params.organization_id,
+        });
+      } else {
+        await supabase.rpc('create_user_profile', {
+          p_auth_id: authUserId || undefined,
           p_email: cleanEmail,
           p_username: cleanUsername,
           p_name: params.name,
@@ -321,10 +327,8 @@ export const authService = {
       console.warn('Excepción al ejecutar RPCs de Supabase:', rpcErr);
     }
 
-    // 3. Registrar o actualizar en la tabla public.users de Supabase
-    const dbUserRow = {
-      id: assignedId,
-      auth_user_id: assignedId,
+    // 3. Crear o actualizar en public.users de Supabase
+    const userPayload: any = {
       username: cleanUsername,
       name: params.name,
       email: cleanEmail,
@@ -335,14 +339,22 @@ export const authService = {
       updated_at: new Date().toISOString(),
     };
 
-    const { error: upsertErr } = await supabase.from('users').upsert(dbUserRow);
+    if (authUserId) {
+      userPayload.id = authUserId;
+      userPayload.auth_user_id = authUserId;
+    }
+
+    const { data: insertedUser, error: upsertErr } = await supabase.from('users').upsert(userPayload).select().maybeSingle();
+
     if (upsertErr) {
       console.warn('Upsert en public.users:', upsertErr.message);
     }
 
+    const finalId = insertedUser?.id || authUserId || `usr-${Date.now()}`;
+
     return {
-      id: assignedId,
-      auth_user_id: assignedId,
+      id: finalId,
+      auth_user_id: authUserId || finalId,
       username: cleanUsername,
       name: params.name,
       email: cleanEmail,
@@ -352,5 +364,53 @@ export const authService = {
       active: true,
       password: cleanPassword,
     };
+  },
+
+  /**
+   * Actualizar usuario en public.users en Supabase.
+   */
+  async updateUser(userId: string, data: Partial<User>): Promise<boolean> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return false;
+
+    const updatePayload: any = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (data.name !== undefined) updatePayload.name = data.name.trim();
+    if (data.email !== undefined) updatePayload.email = data.email.trim().toLowerCase();
+    if (data.username !== undefined) updatePayload.username = data.username.trim().toLowerCase();
+    if (data.role !== undefined) updatePayload.role = data.role;
+    if (data.organization_id !== undefined) updatePayload.organization_id = data.organization_id;
+    if (data.status !== undefined) {
+      updatePayload.status = data.status;
+      updatePayload.active = data.status === 'active';
+    }
+    if (data.active !== undefined) {
+      updatePayload.active = data.active;
+      if (!data.status) updatePayload.status = data.active ? 'active' : 'disabled';
+    }
+
+    const { error } = await supabase.from('users').update(updatePayload).eq('id', userId);
+    if (error) {
+      console.error('Error al actualizar usuario en Supabase:', error.message);
+      return false;
+    }
+    return true;
+  },
+
+  /**
+   * Eliminar usuario de public.users en Supabase.
+   */
+  async deleteUser(userId: string): Promise<boolean> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return false;
+
+    const { error } = await supabase.from('users').delete().eq('id', userId);
+    if (error) {
+      console.error('Error al eliminar usuario en Supabase:', error.message);
+      return false;
+    }
+    return true;
   }
 };

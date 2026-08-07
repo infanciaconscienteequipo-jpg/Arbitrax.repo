@@ -7,6 +7,7 @@ import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { User, Organization } from '../types';
 import { authService, UserProfile } from '../services/auth.service';
+import { organizationService } from '../services/organization.service';
 import { supabase } from '../lib/supabase';
 
 export interface AuthContextType {
@@ -82,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // 3. Validación de Organización (si no es SUPER_ADMIN)
       if (userProfile.role !== 'SUPER_ADMIN' && userProfile.organization_id) {
-        const orgData = await authService.getOrganization(userProfile.organization_id);
+        const orgData = await organizationService.getById(userProfile.organization_id);
 
         if (!orgData || orgData.active === false || orgData.status !== 'active') {
           console.warn('Organización inactiva o suspendida');
