@@ -12,16 +12,12 @@ export interface AppNotification {
 
 export const notificationService = {
   async list(organizationId?: string): Promise<AppNotification[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
-
     let query = supabase.from('notifications').select('*').order('created_at', { ascending: false });
     if (organizationId) {
       query = query.eq('organization_id', organizationId);
     }
     const { data, error } = await query;
     if (error) {
-      // Si la tabla no existe aún, retornar lista limpia en lugar de fallar
       return [];
     }
     return (data || []).map((n: any) => ({
@@ -36,17 +32,11 @@ export const notificationService = {
   },
 
   async markAsRead(id: string): Promise<boolean> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
-
     const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id);
     return !error;
   },
 
   async send(notification: Omit<AppNotification, 'id' | 'read' | 'createdAt'>): Promise<boolean> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
-
     const { error } = await supabase.from('notifications').insert({
       title: notification.title,
       message: notification.message,

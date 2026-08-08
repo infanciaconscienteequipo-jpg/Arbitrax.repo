@@ -18,9 +18,6 @@ export const auditService = {
     organizationId?: string;
     metadata?: any;
   }): Promise<boolean> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
-
     try {
       const { error } = await supabase.from('audit_logs').insert({
         action: params.action,
@@ -38,9 +35,6 @@ export const auditService = {
   },
 
   async getAuditLogs(organizationId?: string): Promise<AuditLog[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
-
     let query = supabase.from('audit_logs').select('*').order('created_at', { ascending: false });
     if (organizationId) {
       query = query.eq('organization_id', organizationId);

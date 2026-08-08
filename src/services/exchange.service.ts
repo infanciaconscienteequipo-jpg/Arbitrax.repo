@@ -3,9 +3,6 @@ import { ExchangeAccount } from '../types';
 
 export const exchangeService = {
   async list(organizationId?: string): Promise<ExchangeAccount[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
-
     let query = supabase.from('exchange_accounts').select('*');
     if (organizationId) {
       query = query.eq('organization_id', organizationId);
@@ -19,9 +16,6 @@ export const exchangeService = {
   },
 
   async create(exchange: ExchangeAccount): Promise<ExchangeAccount> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return exchange;
-
     const dbRow = mapExchangeToDB(exchange);
     const { error } = await supabase.from('exchange_accounts').upsert(dbRow);
     if (error) {
@@ -32,9 +26,6 @@ export const exchangeService = {
   },
 
   async update(exchange: ExchangeAccount): Promise<ExchangeAccount> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return exchange;
-
     const dbRow = mapExchangeToDB(exchange);
     const { error } = await supabase.from('exchange_accounts').upsert(dbRow);
     if (error) {
@@ -45,9 +36,6 @@ export const exchangeService = {
   },
 
   async delete(id: string): Promise<boolean> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
-
     const { error } = await supabase.from('exchange_accounts').delete().eq('id', id);
     if (error) {
       console.error('Error al eliminar exchange:', error.message);

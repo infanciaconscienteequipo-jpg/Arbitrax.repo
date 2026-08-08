@@ -3,9 +3,6 @@ import { Wallet } from '../types';
 
 export const walletService = {
   async list(organizationId?: string): Promise<Wallet[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
-
     try {
       if (organizationId) {
         const { data: rpcData, error: rpcErr } = await supabase.rpc('rpc_wallet_list', {
@@ -32,9 +29,6 @@ export const walletService = {
   },
 
   async create(wallet: Wallet): Promise<Wallet> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return wallet;
-
     const dbWallet = mapWalletToDB(wallet);
 
     try {
@@ -64,9 +58,6 @@ export const walletService = {
   },
 
   async update(wallet: Wallet): Promise<Wallet> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return wallet;
-
     const dbWallet = mapWalletToDB(wallet);
 
     try {
@@ -93,9 +84,6 @@ export const walletService = {
   },
 
   async delete(id: string): Promise<boolean> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
-
     try {
       const { error: rpcErr } = await supabase.rpc('rpc_wallet_delete', { p_id: id });
       if (!rpcErr) return true;
@@ -112,9 +100,6 @@ export const walletService = {
   },
 
   async balance(walletId: string): Promise<{ pesos: number; usdt: number } | null> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null;
-
     try {
       const { data, error } = await supabase.rpc('rpc_wallet_balance', { p_wallet_id: walletId });
       if (!error && data) {
@@ -136,9 +121,6 @@ export const walletService = {
     amountUsdt?: number;
     organizationId: string;
   }): Promise<boolean> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
-
     try {
       const { error } = await supabase.rpc('rpc_wallet_transfer', {
         p_from_id: params.fromWalletId,

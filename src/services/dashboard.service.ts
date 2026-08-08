@@ -13,9 +13,6 @@ import {
 
 export const dashboardService = {
   async getDashboardMetrics(organizationId?: string): Promise<any> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null;
-
     try {
       if (organizationId) {
         const { data, error } = await supabase.rpc('rpc_dashboard', { p_organization_id: organizationId });
@@ -35,15 +32,6 @@ export const dashboardService = {
     tableCounts?: Record<string, number>;
     error?: string;
   }> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      return {
-        connected: false,
-        message: 'No hay sesión autenticada en Supabase.',
-        error: 'Debe iniciar sesión para verificar la conexión a las tablas.',
-      };
-    }
-
     try {
       const { data: orgs, error: orgsErr, count: orgsCount } = await supabase
         .from('organizations')
@@ -87,9 +75,6 @@ export const dashboardService = {
   },
 
   async fetchAppState(organizationId?: string): Promise<Partial<AppState> | null> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null;
-
     try {
       let orgsQuery = supabase.from('organizations').select('*');
       let usersQuery = supabase.from('users').select('*');
@@ -285,9 +270,6 @@ export const dashboardService = {
   },
 
   async seedInitialData(state: AppState): Promise<boolean> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
-
     try {
       if (state.organizations.length > 0) {
         for (const o of state.organizations) {
@@ -350,9 +332,6 @@ export const dashboardService = {
   },
 
   async syncIncomeExpense(record: IncomeExpenseRecord): Promise<void> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
-
     const dbRecord = {
       id: record.id,
       type: record.type,

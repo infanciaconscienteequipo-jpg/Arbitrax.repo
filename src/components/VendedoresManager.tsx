@@ -133,7 +133,7 @@ export default function VendedoresManager({
         organization_id: orgId,
       });
 
-      setSuccessMsg(`✅ Vendedor ${cleanName} registrado exitosamente en Supabase Auth.`);
+      setSuccessMsg(`✅ Vendedor ${cleanName} registrado exitosamente.`);
       setName('');
       setUsername('');
       setEmail('');
@@ -509,7 +509,7 @@ export default function VendedoresManager({
           <div className="p-3 bg-binance-black/20 border border-binance-border rounded-xl flex gap-3 text-binance-gray text-[10px] leading-relaxed">
             <UserCheck className="w-4 h-4 shrink-0 text-binance-yellow mt-0.5" />
             <p>
-              Todos los vendedores creados están registrados en <strong>Supabase Auth</strong> y vinculados mediante <code>rpc_create_seller</code>. Pueden iniciar sesión con su correo o usuario y contraseña.
+              Todos los vendedores creados están registrados en <strong>public.users</strong> y pertenecen a la organización activa. Pueden iniciar sesión con su correo o usuario y contraseña.
             </p>
           </div>
         </div>

@@ -30,7 +30,7 @@ export default function RequireAuth({ children }: RequireAuthProps) {
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-binance-yellow/20 border-t-binance-yellow rounded-full animate-spin" />
           <p className="text-xs text-binance-gray font-bold tracking-wider uppercase animate-pulse">
-            Verificando credenciales con Supabase Auth...
+            Cargando sesión de usuario...
           </p>
         </div>
       </div>

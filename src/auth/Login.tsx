@@ -57,7 +57,7 @@ export default function Login({ onCloseModal, isModal = false }: LoginProps) {
       await login(cleanId, cleanPass);
       if (onCloseModal) onCloseModal();
     } catch (err: any) {
-      setLocalError(err.message || 'Error al iniciar sesión con Supabase Auth.');
+      setLocalError(err.message || 'Error al iniciar sesión.');
     } finally {
       setLoading(false);
     }
@@ -174,7 +174,7 @@ export default function Login({ onCloseModal, isModal = false }: LoginProps) {
             className="w-full py-3 bg-gradient-to-r from-binance-yellow to-amber-500 hover:from-amber-400 hover:to-binance-yellow text-binance-black font-black text-xs uppercase tracking-wider rounded-xl transition shadow-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             {loading ? (
-              <span className="animate-pulse flex items-center gap-2">Autenticando en Supabase...</span>
+              <span className="animate-pulse flex items-center gap-2">Verificando credenciales...</span>
             ) : (
               <>
                 <KeyRound className="w-4 h-4" />
@@ -189,7 +189,7 @@ export default function Login({ onCloseModal, isModal = false }: LoginProps) {
       {/* FOOTER METADATA */}
       <div className="flex items-center justify-center gap-4 text-[10px] text-binance-gray">
         <span className="flex items-center gap-1 text-emerald-400">
-          <ShieldCheck className="w-3.5 h-3.5" /> Supabase Auth Enabled
+          <ShieldCheck className="w-3.5 h-3.5" /> Autenticación Directa PostgreSQL
         </span>
         <span>•</span>
         <span className="flex items-center gap-1">

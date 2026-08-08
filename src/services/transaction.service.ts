@@ -3,9 +3,6 @@ import { Transaction } from '../types';
 
 export const transactionService = {
   async list(organizationId?: string): Promise<Transaction[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
-
     try {
       if (organizationId) {
         const { data: rpcData, error: rpcErr } = await supabase.rpc('rpc_transaction_list', {
@@ -44,9 +41,6 @@ export const transactionService = {
     shiftId?: string;
     organization_id: string;
   }): Promise<Transaction> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null as any;
-
     try {
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_buy', {
         p_crypto: params.crypto,
@@ -105,9 +99,6 @@ export const transactionService = {
     shiftId?: string;
     organization_id: string;
   }): Promise<Transaction> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null as any;
-
     try {
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_sell', {
         p_crypto: params.crypto,
@@ -155,9 +146,6 @@ export const transactionService = {
   },
 
   async create(tx: Transaction): Promise<Transaction> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return tx;
-
     const dbTx = mapTransactionToDB(tx);
     const { error } = await supabase.from('transactions').upsert(dbTx);
     if (error) {

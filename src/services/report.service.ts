@@ -3,9 +3,6 @@ import { Transaction, IncomeExpenseRecord } from '../types';
 
 export const reportService = {
   async getTransactionsReport(organizationId?: string, startDate?: string, endDate?: string): Promise<Transaction[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
-
     let query = supabase.from('transactions').select('*').order('timestamp', { ascending: false });
     if (organizationId) {
       query = query.eq('organization_id', organizationId);
@@ -46,9 +43,6 @@ export const reportService = {
   },
 
   async getIncomeExpensesReport(organizationId?: string): Promise<IncomeExpenseRecord[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
-
     let query = supabase.from('income_expenses').select('*').order('timestamp', { ascending: false });
     if (organizationId) {
       query = query.eq('organization_id', organizationId);

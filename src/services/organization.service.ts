@@ -3,11 +3,7 @@ import { Organization } from '../types';
 
 export const organizationService = {
   async list(): Promise<Organization[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
-
     try {
-      // Intentar RPC rpc_list_companies primero
       const { data: rpcData, error: rpcErr } = await supabase.rpc('rpc_list_companies');
       if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
         return rpcData.map(mapOrgFromDB);
@@ -16,7 +12,6 @@ export const organizationService = {
       console.warn('RPC rpc_list_companies no disponible, usando fallback directo.');
     }
 
-    // Fallback a select directo
     const { data, error } = await supabase.from('organizations').select('*').order('created_at', { ascending: false });
     if (error) {
       console.error('Error al listar organizaciones:', error.message);
@@ -26,9 +21,6 @@ export const organizationService = {
   },
 
   async getById(id: string): Promise<Organization | null> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null;
-
     const { data, error } = await supabase
       .from('organizations')
       .select('*')
@@ -42,63 +34,57 @@ export const organizationService = {
   },
 
   async create(org: Partial<Organization>): Promise<Organization> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) throw new Error('No hay sesión activa en Supabase');
+    try {
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_create_company', {
+        p_name: org.name,
+        p_tax_id: org.taxId || null,
+        p_country: org.country || 'Argentina',
+        p_monthly_fee: org.monthlyFee || 0,
+        p_subscription_status: org.status || 'active',
+        p_subscription_expires_at: org.subscriptionExpiresAt || null,
+        p_max_users: org.maxUsers || 10,
+        p_max_wallets: (org as any).maxWallets || 10,
+        p_max_exchanges: (org as any).maxExchanges || 10,
+        p_storage_limit_mb: (org as any).storageLimitMb || 1024,
+      });
 
-    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_create_company', {
-      p_name: org.name,
-      p_tax_id: org.taxId || null,
-      p_country: org.country || 'Argentina',
-      p_monthly_fee: org.monthlyFee || 0,
-      p_subscription_status: org.status || 'active',
-      p_subscription_expires_at: org.subscriptionExpiresAt || null,
-      p_max_users: org.maxUsers || 10,
-      p_max_wallets: (org as any).maxWallets || 10,
-      p_max_exchanges: (org as any).maxExchanges || 10,
-      p_storage_limit_mb: (org as any).storageLimitMb || 1024,
-    });
-
-    if (rpcErr) {
-      console.error('Error al crear la organización mediante RPC rpc_create_company:', rpcErr.message);
-      throw new Error(rpcErr.message);
-    }
-
-    if (rpcRes) {
-      if (Array.isArray(rpcRes) && rpcRes.length > 0) {
-        return mapOrgFromDB(rpcRes[0]);
-      } else if (typeof rpcRes === 'object' && rpcRes.id) {
-        return mapOrgFromDB(rpcRes);
-      } else if (typeof rpcRes === 'string') {
-        const fetched = await this.getById(rpcRes);
-        if (fetched) return fetched;
-        return {
-          id: rpcRes,
-          name: org.name || '',
-          taxId: org.taxId || '',
-          country: org.country || 'Argentina',
-          status: org.status || 'active',
-          active: org.status === 'active',
-          monthlyFee: org.monthlyFee || 0,
-          createdAt: org.createdAt || new Date().toISOString(),
-          fechaIngreso: org.fechaIngreso || org.createdAt || new Date().toISOString(),
-        } as Organization;
+      if (!rpcErr && rpcRes) {
+        if (Array.isArray(rpcRes) && rpcRes.length > 0) {
+          return mapOrgFromDB(rpcRes[0]);
+        } else if (typeof rpcRes === 'object' && rpcRes.id) {
+          return mapOrgFromDB(rpcRes);
+        } else if (typeof rpcRes === 'string') {
+          const fetched = await this.getById(rpcRes);
+          if (fetched) return fetched;
+        }
       }
+    } catch (e) {
+      console.warn('RPC rpc_create_company falló, intentando inserción directa:', e);
     }
 
-    // Si la RPC finalizó exitosamente pero devolvió vacío, buscamos la empresa recién creada en la lista
-    const currentOrgs = await this.list();
-    const createdMatch = currentOrgs.find(o => o.name === org.name);
-    if (createdMatch) return createdMatch;
+    // Direct insertion fallback into organizations table
+    const newOrgPayload = {
+      id: crypto.randomUUID(),
+      name: org.name,
+      tax_id: org.taxId || null,
+      country: org.country || 'Argentina',
+      status: org.status || 'active',
+      active: org.status === 'active',
+      monthly_fee: org.monthlyFee || 0,
+      subscription_expires_at: org.subscriptionExpiresAt || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
 
-    throw new Error('La función rpc_create_company no devolvió el resultado de la organización.');
+    const { data, error } = await supabase.from('organizations').insert(newOrgPayload).select().single();
+    if (error) {
+      console.error('Error al crear organización directamente:', error.message);
+      throw new Error(error.message);
+    }
+    return mapOrgFromDB(data);
   },
 
   async update(org: Organization): Promise<Organization> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return org;
-
-    const dbOrg = mapOrgToDB(org);
-
     try {
       const { error: rpcErr } = await supabase.rpc('rpc_update_company', {
         p_org_id: org.id,
@@ -134,9 +120,6 @@ export const organizationService = {
   },
 
   async delete(orgId: string): Promise<boolean> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
-
     try {
       const { error: rpcErr } = await supabase.rpc('rpc_delete_company', { p_org_id: orgId });
       if (!rpcErr) {
@@ -146,10 +129,8 @@ export const organizationService = {
       console.warn('RPC rpc_delete_company no disponible, eliminando directamente.');
     }
 
-    // Eliminar o desvincular usuarios
     await supabase.from('users').delete().eq('organization_id', orgId);
 
-    // Eliminar organización
     const { error } = await supabase.from('organizations').delete().eq('id', orgId);
     if (error) {
       console.error('Error al eliminar organización:', error.message);
@@ -183,27 +164,5 @@ function mapOrgFromDB(o: any): Organization {
       customCryptos: true,
       auditLogs: true,
     },
-  };
-}
-
-function mapOrgToDB(org: Organization) {
-  return {
-    id: org.id,
-    name: org.name,
-    tax_id: org.taxId || null,
-    country: org.country || 'Argentina',
-    status: org.status || 'active',
-    active: org.status === 'active',
-    monthly_fee: org.monthlyFee || 0,
-    subscription_expires_at: org.subscriptionExpiresAt || null,
-    feature_flags: org.featureFlags || {
-      p2pCalculator: true,
-      shiftClosing: true,
-      advancedReports: true,
-      customCryptos: true,
-      auditLogs: true,
-    },
-    created_at: org.createdAt || new Date().toISOString(),
-    updated_at: new Date().toISOString(),
   };
 }

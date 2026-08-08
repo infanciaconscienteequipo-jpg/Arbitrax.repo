@@ -3,20 +3,77 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import bcrypt from 'bcryptjs';
 import { supabase } from '../lib/supabase';
-import { User, Organization } from '../types';
+import { User } from '../types';
 
 export interface UserProfile extends User {
-  auth_user_id?: string;
   subscription_status?: string;
 }
 
+const SESSION_KEY = 'arbitrax_session';
+
 export const authService = {
   /**
-   * Iniciar sesión utilizando Supabase Auth.
-   * Busca el correo electrónico en public.users si se ingresó un nombre de usuario.
+   * Obtener la sesión almacenada en localStorage
    */
-  async login(identifier: string, pass: string) {
+  getCurrentSession(): User | null {
+    try {
+      const stored = localStorage.getItem(SESSION_KEY);
+      if (!stored) return null;
+      const user = JSON.parse(stored) as User;
+      if (!user || !user.id || !user.role) return null;
+
+      // Normalizar rol
+      const rawRole = (user.role || '').toUpperCase();
+      let normalizedRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+      if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
+      else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
+
+      return {
+        ...user,
+        role: normalizedRole,
+      };
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Guardar la sesión activa en localStorage (NUNCA almacena contraseña ni hash)
+   */
+  setSession(user: User): void {
+    const rawRole = (user.role || '').toUpperCase();
+    let normalizedRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+    if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
+    else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
+
+    const sessionData: User = {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      email: user.email,
+      role: normalizedRole,
+      organization_id: user.organization_id,
+      status: user.status || 'active',
+      active: user.active !== false,
+      lastLogin: new Date().toISOString(),
+    };
+
+    localStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
+  },
+
+  /**
+   * Limpiar sesión local
+   */
+  clearSession(): void {
+    localStorage.removeItem(SESSION_KEY);
+  },
+
+  /**
+   * Iniciar sesión directamente contra public.users usando bcrypt
+   */
+  async login(identifier: string, pass: string): Promise<User> {
     const cleanId = identifier.trim().toLowerCase();
     const cleanPass = pass.trim();
 
@@ -24,187 +81,220 @@ export const authService = {
       throw new Error('Por favor, ingresa tu usuario/correo y contraseña.');
     }
 
-    let targetEmail = cleanId;
+    // Buscar en public.users por username o email o name
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('*')
+      .or(`username.ilike.${cleanId},email.ilike.${cleanId},name.ilike.${cleanId}`);
 
-    const defaultUserMap: Record<string, string> = {
-      'superadmin': 'arbitrax19@gmail.com',
-      'admin': 'admiarbitrax1@gmail.com',
-      'roberto.g': 'roberto.g@arbitrax.com',
-      'carla.b': 'carla.b@arbitrax.com',
+    if (error) {
+      console.error('Error al consultar public.users durante login:', error.message);
+      throw new Error('Error al conectar con la base de datos.');
+    }
+
+    if (!users || users.length === 0) {
+      throw new Error('Usuario o contraseña incorrectos.');
+    }
+
+    const userData = users[0];
+
+    // Verificar si el usuario está activo
+    if (userData.active === false || userData.status === 'disabled' || userData.status === 'suspended') {
+      throw new Error('El usuario está desactivado o suspendido. Contacta al administrador.');
+    }
+
+    // Hash/password almacenado en la DB
+    const storedHash = userData.password_hash || userData.password || '';
+
+    // Comparar usando bcrypt. Si el hash guardado previamente fuera texto plano, permitir coincidencia exacta como resguardo
+    let isPasswordValid = false;
+    if (storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$') || storedHash.startsWith('$2y$')) {
+      isPasswordValid = bcrypt.compareSync(cleanPass, storedHash);
+    } else {
+      // Resguardo para cuentas existentes en texto plano
+      isPasswordValid = (cleanPass === storedHash);
+    }
+
+    if (!isPasswordValid) {
+      throw new Error('Usuario o contraseña incorrectos.');
+    }
+
+    // Normalizar rol
+    const rawRole = (userData.role || '').toUpperCase();
+    let normalizedRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+    if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
+    else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
+
+    const userObj: User = {
+      id: userData.id,
+      username: userData.username || cleanId,
+      name: userData.name || userData.username || 'Usuario',
+      email: userData.email || '',
+      role: normalizedRole,
+      organization_id: userData.organization_id || null,
+      status: userData.status || 'active',
+      active: true,
+      lastLogin: new Date().toISOString(),
     };
 
-    if (defaultUserMap[cleanId]) {
-      targetEmail = defaultUserMap[cleanId];
-    } else if (!cleanId.includes('@')) {
-      try {
-        const { data: userData } = await supabase
-          .from('users')
-          .select('email, username')
-          .or(`username.ilike.${cleanId},email.ilike.${cleanId}`)
-          .maybeSingle();
+    // Guardar sesión en localStorage
+    this.setSession(userObj);
 
-        if (userData && userData.email) {
-          targetEmail = userData.email;
-        } else {
-          targetEmail = `${cleanId}@arbitrax.local`;
-        }
-      } catch (err) {
-        console.warn('Búsqueda de usuario por username falló:', err);
-        targetEmail = `${cleanId}@arbitrax.local`;
-      }
-    }
-
+    // Actualizar last_login en public.users (opcional en segundo plano)
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: targetEmail,
-        password: cleanPass,
-      });
+      await supabase.from('users').update({ updated_at: new Date().toISOString() }).eq('id', userData.id);
+    } catch {
+      // Ignorar errores de tracking
+    }
 
-      if (error) {
-        throw error;
+    return userObj;
+  },
+
+  /**
+   * Cerrar sesión del usuario
+   */
+  async logout(): Promise<void> {
+    this.clearSession();
+  },
+
+  /**
+   * Crear usuario (SUPER_ADMIN, ADMIN o VENDEDOR) directamente en public.users usando bcrypt
+   */
+  async createUser(params: {
+    email: string;
+    password?: string;
+    name: string;
+    username: string;
+    role: 'ADMIN' | 'VENDEDOR' | 'SUPER_ADMIN' | string;
+    organization_id: string | null;
+  }): Promise<User> {
+    const rawRole = (params.role || '').toUpperCase();
+    let normalizedRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+    if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
+    else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
+
+    const cleanEmail = params.email.trim().toLowerCase();
+    const cleanPassword = params.password ? params.password.trim() : 'Arbitrax.2006';
+    const cleanUsername = params.username.trim().toLowerCase();
+    const cleanName = params.name.trim();
+
+    if (!params.organization_id && normalizedRole !== 'SUPER_ADMIN') {
+      throw new Error('El usuario debe pertenecer a una organización válida.');
+    }
+
+    // Verificar si el username o email ya existen
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id, username, email')
+      .or(`username.ilike.${cleanUsername},email.ilike.${cleanEmail}`);
+
+    if (existing && existing.length > 0) {
+      const match = existing[0];
+      if (match.username?.toLowerCase() === cleanUsername) {
+        throw new Error(`El nombre de usuario '${cleanUsername}' ya está registrado.`);
       }
-
-      return data;
-    } catch (err: any) {
-      console.error('Error de autenticación en login:', err);
-      throw err;
+      if (match.email?.toLowerCase() === cleanEmail) {
+        throw new Error(`El correo electrónico '${cleanEmail}' ya está registrado.`);
+      }
     }
-  },
 
-  /**
-   * Cerrar sesión mediante Supabase Auth.
-   */
-  async logout() {
-    const { error } = await supabase.auth.signOut();
+    // Generar hash bcrypt de la contraseña
+    const passwordHash = bcrypt.hashSync(cleanPassword, 10);
+    const newUserId = crypto.randomUUID();
+
+    const newUserPayload = {
+      id: newUserId,
+      username: cleanUsername,
+      name: cleanName,
+      email: cleanEmail,
+      password_hash: passwordHash,
+      password: passwordHash,
+      role: normalizedRole,
+      organization_id: normalizedRole === 'SUPER_ADMIN' ? null : params.organization_id,
+      status: 'active',
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('users')
+      .insert(newUserPayload)
+      .select()
+      .single();
+
     if (error) {
-      console.error('Error al cerrar sesión:', error.message);
-      throw new Error(error.message);
+      console.error('Error al insertar usuario en public.users:', error.message);
+      throw new Error(`Error al crear usuario: ${error.message}`);
     }
+
+    return {
+      id: data.id || newUserId,
+      username: cleanUsername,
+      name: cleanName,
+      email: cleanEmail,
+      role: normalizedRole,
+      organization_id: normalizedRole === 'SUPER_ADMIN' ? null : params.organization_id,
+      status: 'active',
+      active: true,
+    };
   },
 
   /**
-   * Enviar correo de recuperación de contraseña.
+   * Crear Vendedor para la organización del Administrador
    */
-  async resetPasswordForEmail(email: string) {
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) {
-      throw new Error('Por favor, ingresa tu correo electrónico.');
-    }
-
-    const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-      redirectTo: `${import.meta.env.VITE_SUPABASE_URL}/reset-password`,
+  async createSeller(params: {
+    email: string;
+    password?: string;
+    name: string;
+    username: string;
+    organization_id: string;
+  }): Promise<User> {
+    return this.createUser({
+      ...params,
+      role: 'VENDEDOR',
     });
-
-    if (error) {
-      console.error('Error al solicitar recuperación de contraseña:', error.message);
-      throw new Error(error.message);
-    }
   },
 
   /**
-   * Actualizar contraseña del usuario autenticado.
+   * Crear Administrador vinculado a una Organización
    */
-  async updatePassword(newPassword: string) {
-    if (!newPassword || newPassword.length < 6) {
-      throw new Error('La nueva contraseña debe tener al menos 6 caracteres.');
-    }
-
-    const { error } = await supabase.auth.updateUser({
-      password: newPassword,
+  async createAdmin(params: {
+    email: string;
+    password?: string;
+    name: string;
+    username?: string;
+    organization_id: string;
+  }): Promise<User> {
+    return this.createUser({
+      ...params,
+      username: params.username || params.email.trim().toLowerCase().split('@')[0],
+      role: 'ADMIN',
     });
-
-    if (error) {
-      console.error('Error al actualizar contraseña:', error.message);
-      throw new Error(error.message);
-    }
   },
 
   /**
-   * Consultar perfil del usuario en public.users mediante auth_user_id = auth.uid()
-   * NUNCA asigna ni genera un rol por defecto si el registro no existe en public.users.
-   */
-  async getUserProfile(authUserId: string, email?: string): Promise<UserProfile | null> {
-    try {
-      let { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .or(`auth_user_id.eq.${authUserId},id.eq.${authUserId}`)
-        .maybeSingle();
-
-      if ((!data || error) && email) {
-        const emailSearch = await supabase
-          .from('users')
-          .select('*')
-          .ilike('email', email)
-          .maybeSingle();
-
-        if (emailSearch.data) {
-          data = emailSearch.data;
-          error = null;
-        }
-      }
-
-      if (data) {
-        if (!data.auth_user_id && authUserId) {
-          await supabase.from('users').update({ auth_user_id: authUserId }).eq('id', data.id);
-        }
-
-        const rawRole = (data.role || '').toUpperCase();
-        let userRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR';
-
-        if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') {
-          userRole = 'SUPER_ADMIN';
-        } else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') {
-          userRole = 'ADMIN';
-        } else {
-          userRole = 'VENDEDOR';
-        }
-
-        return {
-          id: data.id,
-          auth_user_id: data.auth_user_id || authUserId,
-          username: data.username || email?.split('@')[0] || 'usuario',
-          name: data.name || data.username || 'Usuario',
-          email: data.email || email,
-          role: userRole,
-          organization_id: data.organization_id || null,
-          status: data.status || 'active',
-          active: data.active !== false && data.status === 'active',
-          lastLogin: new Date().toISOString(),
-        };
-      }
-
-      // Si no existe perfil en public.users, retornar null (NUNCA asignar rol por defecto)
-      return null;
-    } catch (err) {
-      console.error('Error al obtener perfil de usuario de public.users:', err);
-      return null;
-    }
-  },
-
-  /**
-   * Consultar lista de usuarios desde public.users en Supabase
+   * Listar usuarios desde public.users
    */
   async listUsers(role?: string, organizationId?: string): Promise<User[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
-
     let query = supabase.from('users').select('*').order('created_at', { ascending: false });
+
     if (role) {
       const r = role.toUpperCase();
-      if (r === 'VENDEDOR' || r === 'VENDEDOR') {
+      if (r === 'VENDEDOR' || r === 'SELLER') {
         query = query.or('role.ilike.VENDEDOR,role.ilike.SELLER,role.ilike.vendedor,role.ilike.operator');
       } else {
         query = query.ilike('role', role);
       }
     }
+
     if (organizationId) {
       query = query.eq('organization_id', organizationId);
     }
 
     const { data, error } = await query;
     if (error) {
-      console.error('Error al listar usuarios desde Supabase:', error.message);
+      console.error('Error al listar usuarios desde public.users:', error.message);
       return [];
     }
 
@@ -223,159 +313,14 @@ export const authService = {
         organization_id: u.organization_id || '',
         status: u.status || 'active',
         active: u.active !== false && u.status === 'active',
-        password: u.password,
       };
     });
   },
 
   /**
-   * Crear usuario (VENDEDOR o ADMIN) utilizando EXCLUSIVAMENTE la Edge Function `create-user`.
-   * Garantiza la ejecución con SERVICE_ROLE_KEY sin alterar ni cambiar la sesión activa en el cliente.
+   * Actualizar usuario directamente en public.users
    */
-  async createUser(params: {
-    email: string;
-    password?: string;
-    name: string;
-    username: string;
-    role: 'ADMIN' | 'VENDEDOR' | 'SUPER_ADMIN' | string;
-    organization_id: string;
-  }): Promise<UserProfile> {
-    const rawRole = (params.role || '').toUpperCase();
-    let normalizedRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
-    if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
-    else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
-
-    const cleanEmail = params.email.trim().toLowerCase();
-    const cleanPassword = params.password ? params.password.trim() : 'Arbitrax.2006';
-    const cleanUsername = params.username.trim().toLowerCase();
-    const cleanName = params.name.trim();
-
-    if (!params.organization_id && normalizedRole !== 'SUPER_ADMIN') {
-      throw new Error('El usuario debe pertenecer a una organización válida.');
-    }
-
-    // Invocación a la Edge Function `create-user` que ejecuta createUser vía Admin API (SERVICE_ROLE_KEY)
-    const { data: edgeData, error: edgeErr } = await supabase.functions.invoke('create-user', {
-      body: {
-        email: cleanEmail,
-        password: cleanPassword,
-        username: cleanUsername,
-        name: cleanName,
-        organization_id: params.organization_id,
-        role: normalizedRole,
-      },
-    });
-
-    if (edgeErr) {
-      console.error('Error al invocar Edge Function create-user:', edgeErr);
-      throw new Error(edgeErr.message || 'Error de conexión con la Edge Function create-user');
-    }
-
-    if (edgeData?.error) {
-      console.error('Error devuelto por la Edge Function create-user:', edgeData.error);
-      throw new Error(edgeData.error);
-    }
-
-    if (!edgeData || !edgeData.auth_user_id) {
-      throw new Error('La Edge Function create-user no devolvió el ID del usuario creado.');
-    }
-
-    return {
-      id: edgeData.auth_user_id,
-      auth_user_id: edgeData.auth_user_id,
-      username: cleanUsername,
-      name: cleanName,
-      email: cleanEmail,
-      role: normalizedRole,
-      organization_id: edgeData.organization_id || params.organization_id,
-      status: 'active',
-      active: true,
-      password: cleanPassword,
-    };
-  },
-
-  /**
-   * Crear Vendedor para la organización del Administrador.
-   */
-  async createSeller(params: {
-    email: string;
-    password?: string;
-    name: string;
-    username: string;
-    organization_id: string;
-  }): Promise<UserProfile> {
-    return this.createUser({
-      ...params,
-      role: 'VENDEDOR',
-    });
-  },
-
-  /**
-   * Crear Administrador vinculado a una Organización real en Supabase.
-   */
-  async createAdmin(params: {
-    email: string;
-    password?: string;
-    name: string;
-    username?: string;
-    organization_id: string;
-  }): Promise<UserProfile> {
-    return this.createUser({
-      ...params,
-      username: params.username || params.email.trim().toLowerCase().split('@')[0],
-      role: 'ADMIN',
-    });
-  },
-
-  /**
-   * Actualizar datos del vendedor utilizando EXCLUSIVAMENTE la RPC rpc_update_seller.
-   */
-  async updateSeller(seller: {
-    id: string;
-    name: string;
-    username: string;
-    email: string;
-    active: boolean;
-  }): Promise<boolean> {
-    const { error } = await supabase.rpc('rpc_update_seller', {
-      p_user_id: seller.id,
-      p_name: seller.name,
-      p_username: seller.username,
-      p_email: seller.email,
-      p_active: seller.active,
-    });
-
-    if (error) {
-      console.error('Error al ejecutar rpc_update_seller en Supabase:', error.message);
-      throw new Error(`Error rpc_update_seller: ${error.message}`);
-    }
-
-    return true;
-  },
-
-  /**
-   * Archivar/Desactivar vendedor (Soft Delete) ejecutando EXCLUSIVAMENTE la RPC rpc_delete_seller.
-   */
-  async deleteSeller(userId: string): Promise<boolean> {
-    const { error } = await supabase.rpc('rpc_delete_seller', {
-      p_user_id: userId,
-    });
-
-    if (error) {
-      console.error('Error al ejecutar rpc_delete_seller en Supabase:', error.message);
-      throw new Error(error.message);
-    }
-
-    return true;
-  },
-
-  /**
-   * Actualizar usuario en public.users en Supabase.
-   */
-  async updateUser(userId: string, data: Partial<User>): Promise<boolean> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
-
+  async updateUser(userId: string, data: Partial<User & { password?: string }>): Promise<boolean> {
     const updatePayload: any = {
       updated_at: new Date().toISOString(),
     };
@@ -383,7 +328,18 @@ export const authService = {
     if (data.name !== undefined) updatePayload.name = data.name.trim();
     if (data.email !== undefined) updatePayload.email = data.email.trim().toLowerCase();
     if (data.username !== undefined) updatePayload.username = data.username.trim().toLowerCase();
-    if (data.role !== undefined) updatePayload.role = data.role;
+    if (data.password) {
+      const hash = bcrypt.hashSync(data.password.trim(), 10);
+      updatePayload.password_hash = hash;
+      updatePayload.password = hash;
+    }
+    if (data.role !== undefined) {
+      const rawRole = data.role.toUpperCase();
+      let normRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+      if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
+      else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+      updatePayload.role = normRole;
+    }
     if (data.organization_id !== undefined) updatePayload.organization_id = data.organization_id;
     if (data.status !== undefined) {
       updatePayload.status = data.status;
@@ -397,32 +353,48 @@ export const authService = {
     const { error } = await supabase
       .from('users')
       .update(updatePayload)
-      .or(`id.eq.${userId},auth_user_id.eq.${userId},username.eq.${userId}`);
+      .eq('id', userId);
 
     if (error) {
-      console.error('Error al actualizar usuario en Supabase:', error.message);
+      console.error('Error al actualizar usuario en public.users:', error.message);
       return false;
     }
     return true;
   },
 
   /**
-   * Eliminar usuario de public.users en Supabase.
+   * Actualizar vendedor
+   */
+  async updateSeller(seller: {
+    id: string;
+    name: string;
+    username: string;
+    email: string;
+    active: boolean;
+  }): Promise<boolean> {
+    return this.updateUser(seller.id, seller);
+  },
+
+  /**
+   * Desactivar o eliminar vendedor
+   */
+  async deleteSeller(userId: string): Promise<boolean> {
+    return this.updateUser(userId, { active: false, status: 'disabled' });
+  },
+
+  /**
+   * Eliminar usuario
    */
   async deleteUser(userId: string): Promise<boolean> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return false;
-
     const { error } = await supabase
       .from('users')
       .delete()
-      .or(`id.eq.${userId},auth_user_id.eq.${userId},username.eq.${userId}`);
+      .eq('id', userId);
 
     if (error) {
-      console.error('Error al eliminar usuario en Supabase:', error.message);
+      console.error('Error al eliminar usuario en public.users:', error.message);
       return false;
     }
     return true;
   },
 };
-

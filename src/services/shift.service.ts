@@ -3,9 +3,6 @@ import { Shift } from '../types';
 
 export const shiftService = {
   async list(organizationId?: string): Promise<Shift[]> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return [];
-
     let query = supabase.from('shifts').select('*').order('start_time', { ascending: false });
     if (organizationId) {
       query = query.eq('organization_id', organizationId);
@@ -19,9 +16,6 @@ export const shiftService = {
   },
 
   async getActiveShift(organizationId?: string): Promise<Shift | null> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null;
-
     let query = supabase.from('shifts').select('*').is('end_time', null).order('start_time', { ascending: false });
     if (organizationId) {
       query = query.eq('organization_id', organizationId);
@@ -34,9 +28,6 @@ export const shiftService = {
   },
 
   async startShift(operatorName: string, initialBalances: any, organizationId?: string): Promise<Shift> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null as any;
-
     const newShift: Shift = {
       id: `shift-${Date.now()}`,
       operatorName,
@@ -53,9 +44,6 @@ export const shiftService = {
   },
 
   async closeShift(shiftId: string, finalBalances?: any): Promise<Shift | null> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null;
-
     const { data: existing, error: getErr } = await supabase.from('shifts').select('*').eq('id', shiftId).single();
     if (getErr || !existing) {
       console.error('No se encontró el turno para cerrar:', getErr?.message);
@@ -72,9 +60,6 @@ export const shiftService = {
   },
 
   async sync(shift: Shift): Promise<Shift> {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return shift;
-
     const dbShift = mapShiftToDB(shift);
     const { error } = await supabase.from('shifts').upsert(dbShift);
     if (error) {
