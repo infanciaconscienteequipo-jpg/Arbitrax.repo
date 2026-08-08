@@ -394,6 +394,116 @@ VALUES
   ('lemon-ex', 'Lemon Exchange', 310, 'u-3', 'Carla Benítez', 'org-1'),
   ('okx-main', 'OKX Pro', 600, 'u-3', 'Carla Benítez', 'org-1')
 ON CONFLICT (id) DO NOTHING;
+
+-- =====================================================================
+-- 13. FUNCIONES DE AUTENTICACIÓN Y VALIDACIÓN DE SESIÓN (RPC)
+-- =====================================================================
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE OR REPLACE FUNCTION public.rpc_login_user(
+  p_identifier text,
+  p_password text
+)
+RETURNS TABLE (
+  id text,
+  username text,
+  name text,
+  email text,
+  role text,
+  organization_id text,
+  active boolean,
+  status text
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_user record;
+  v_clean_id text;
+  v_clean_pass text;
+  v_is_valid boolean := false;
+BEGIN
+  v_clean_id := lower(trim(p_identifier));
+  v_clean_pass := trim(p_password);
+
+  IF v_clean_id IS NULL OR v_clean_id = '' OR v_clean_pass IS NULL OR v_clean_pass = '' THEN
+    RAISE EXCEPTION 'IDENTIFIER_AND_PASSWORD_REQUIRED';
+  END IF;
+
+  SELECT u.* INTO v_user
+  FROM public.users u
+  WHERE lower(trim(u.username)) = v_clean_id
+     OR lower(trim(u.email)) = v_clean_id
+     OR lower(trim(u.name)) = v_clean_id
+  LIMIT 1;
+
+  IF v_user IS NULL THEN
+    RAISE EXCEPTION 'USER_NOT_FOUND';
+  END IF;
+
+  IF v_user.active = false OR v_user.status = 'disabled' OR v_user.status = 'suspended' THEN
+    RAISE EXCEPTION 'USER_INACTIVE';
+  END IF;
+
+  IF v_user.password_hash LIKE '$2a$%' OR v_user.password_hash LIKE '$2b$%' OR v_user.password_hash LIKE '$2y$%' THEN
+    IF crypt(v_clean_pass, v_user.password_hash) = v_user.password_hash THEN
+      v_is_valid := true;
+    END IF;
+  END IF;
+
+  IF NOT v_is_valid THEN
+    RAISE EXCEPTION 'INVALID_PASSWORD';
+  END IF;
+
+  UPDATE public.users SET updated_at = NOW() WHERE public.users.id = v_user.id;
+
+  RETURN QUERY
+  SELECT 
+    v_user.id::text,
+    v_user.username::text,
+    v_user.name::text,
+    COALESCE(v_user.email, '')::text,
+    v_user.role::text,
+    v_user.organization_id::text,
+    v_user.active,
+    v_user.status::text;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.rpc_validate_session(
+  p_user_id text
+)
+RETURNS TABLE (
+  id text,
+  username text,
+  name text,
+  email text,
+  role text,
+  organization_id text,
+  active boolean,
+  status text
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    u.id::text,
+    u.username::text,
+    u.name::text,
+    COALESCE(u.email, '')::text,
+    u.role::text,
+    u.organization_id::text,
+    u.active,
+    u.status::text
+  FROM public.users u
+  WHERE u.id = p_user_id
+    AND u.active = true
+    AND u.status = 'active'
+  LIMIT 1;
+END;
+$$;
 `;
 
   const ROLLBACK_SQL_SCRIPT = `-- =====================================================================

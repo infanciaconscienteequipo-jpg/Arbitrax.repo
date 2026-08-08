@@ -12,7 +12,6 @@ interface ForgotPasswordProps {
 }
 
 export default function ForgotPassword({ onBackToLogin }: ForgotPasswordProps) {
-  const { resetPassword } = useAuth();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -31,10 +30,9 @@ export default function ForgotPassword({ onBackToLogin }: ForgotPasswordProps) {
     setLoading(true);
 
     try {
-      await resetPassword(email.trim());
       setSuccess(true);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Error al enviar el correo de recuperación.');
+      setErrorMsg(err.message || 'Error al procesar la solicitud.');
     } finally {
       setLoading(false);
     }

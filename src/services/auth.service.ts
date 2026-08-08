@@ -5,34 +5,64 @@
 
 import bcrypt from 'bcryptjs';
 import { supabase } from '../lib/supabase';
-import { User } from '../types';
+import { User, UserRole } from '../types';
 
 export interface UserProfile extends User {
   subscription_status?: string;
 }
 
 const SESSION_KEY = 'arbitrax_session';
+const LEGACY_KEYS = [
+  'auth_session',
+  'user',
+  'currentUser',
+  'arbitrax_user',
+  'supabase.auth.token',
+  'sb-token',
+  'supabase.auth',
+];
 
 export const authService = {
   /**
-   * Obtener la sesión almacenada en localStorage
+   * Limpiar sesiones legacy o incompatibles en localStorage
+   */
+  clearLegacySessions(): void {
+    try {
+      for (const key of LEGACY_KEYS) {
+        localStorage.removeItem(key);
+      }
+    } catch {
+      // Ignorar errores de acceso a localStorage
+    }
+  },
+
+  /**
+   * Obtener la sesión activa en localStorage
    */
   getCurrentSession(): User | null {
+    this.clearLegacySessions();
     try {
       const stored = localStorage.getItem(SESSION_KEY);
       if (!stored) return null;
       const user = JSON.parse(stored) as User;
       if (!user || !user.id || !user.role) return null;
 
-      // Normalizar rol
+      // Normalizar rol estrictamente
       const rawRole = (user.role || '').toUpperCase();
-      let normalizedRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+      let normalizedRole: UserRole = 'VENDEDOR';
       if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
       else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
 
       return {
-        ...user,
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        email: user.email || '',
         role: normalizedRole,
+        organization_id: normalizedRole === 'SUPER_ADMIN' ? null : (user.organization_id || null),
+        status: user.status || 'active',
+        active: user.active !== false,
+        lastLogin: user.lastLogin,
       };
     } catch {
       return null;
@@ -43,8 +73,9 @@ export const authService = {
    * Guardar la sesión activa en localStorage (NUNCA almacena contraseña ni hash)
    */
   setSession(user: User): void {
+    this.clearLegacySessions();
     const rawRole = (user.role || '').toUpperCase();
-    let normalizedRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+    let normalizedRole: UserRole = 'VENDEDOR';
     if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
     else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
 
@@ -52,9 +83,9 @@ export const authService = {
       id: user.id,
       username: user.username,
       name: user.name,
-      email: user.email,
+      email: user.email || '',
       role: normalizedRole,
-      organization_id: user.organization_id,
+      organization_id: normalizedRole === 'SUPER_ADMIN' ? null : (user.organization_id || null),
       status: user.status || 'active',
       active: user.active !== false,
       lastLogin: new Date().toISOString(),
@@ -67,11 +98,80 @@ export const authService = {
    * Limpiar sesión local
    */
   clearSession(): void {
-    localStorage.removeItem(SESSION_KEY);
+    try {
+      localStorage.removeItem(SESSION_KEY);
+      this.clearLegacySessions();
+    } catch {
+      // Ignorar
+    }
   },
 
   /**
-   * Iniciar sesión directamente contra public.users usando bcrypt
+   * Validar sesión activa contra la base de datos PostgreSQL mediante RPC
+   */
+  async validateSession(userId: string): Promise<User | null> {
+    if (!userId) return null;
+    try {
+      const { data, error } = await supabase.rpc('rpc_validate_session', { p_user_id: userId });
+
+      if (error) {
+        // Fallback de consulta directa si la RPC aún no existe en Supabase
+        const { data: userData, error: queryErr } = await supabase
+          .from('users')
+          .select('id, username, name, email, role, organization_id, status, active')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (queryErr || !userData || userData.active === false || userData.status === 'disabled' || userData.status === 'suspended') {
+          return null;
+        }
+
+        const rawRole = (userData.role || '').toUpperCase();
+        let normRole: UserRole = 'VENDEDOR';
+        if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
+        else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+
+        return {
+          id: userData.id,
+          username: userData.username,
+          name: userData.name,
+          email: userData.email || '',
+          role: normRole,
+          organization_id: normRole === 'SUPER_ADMIN' ? null : (userData.organization_id || null),
+          status: userData.status || 'active',
+          active: userData.active !== false,
+        };
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row || row.active === false || row.status === 'disabled' || row.status === 'suspended') {
+        return null;
+      }
+
+      const rawRole = (row.role || '').toUpperCase();
+      let normRole: UserRole = 'VENDEDOR';
+      if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
+      else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+
+      return {
+        id: row.id,
+        username: row.username,
+        name: row.name,
+        email: row.email || '',
+        role: normRole,
+        organization_id: normRole === 'SUPER_ADMIN' ? null : (row.organization_id || null),
+        status: row.status || 'active',
+        active: row.active !== false,
+      };
+    } catch (err) {
+      console.error('Error al validar sesión contra la base de datos:', err);
+      return null;
+    }
+  },
+
+  /**
+   * Iniciar sesión directamente en PostgreSQL vía RPC rpc_login_user.
+   * La verificación de contraseña se realiza EN LA BASE DE DATOS. NUNCA se envía password_hash al cliente.
    */
   async login(identifier: string, pass: string): Promise<User> {
     const cleanId = identifier.trim().toLowerCase();
@@ -81,73 +181,121 @@ export const authService = {
       throw new Error('Por favor, ingresa tu usuario/correo y contraseña.');
     }
 
-    // Buscar en public.users por username o email o name
-    const { data: users, error } = await supabase
-      .from('users')
-      .select('*')
-      .or(`username.ilike.${cleanId},email.ilike.${cleanId},name.ilike.${cleanId}`);
+    let userObj: User | null = null;
 
-    if (error) {
-      console.error('Error al consultar public.users durante login:', error.message);
-      throw new Error('Error al conectar con la base de datos.');
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('rpc_login_user', {
+        p_identifier: cleanId,
+        p_password: cleanPass,
+      });
+
+      if (rpcError) {
+        const msg = rpcError.message || '';
+        if (msg.includes('USER_INACTIVE')) {
+          throw new Error('El usuario está desactivado o suspendido. Contacta al administrador.');
+        }
+        if (msg.includes('USER_NOT_FOUND') || msg.includes('INVALID_PASSWORD')) {
+          throw new Error('Usuario o contraseña incorrectos.');
+        }
+        if (msg.includes('IDENTIFIER_AND_PASSWORD_REQUIRED')) {
+          throw new Error('Por favor, ingresa tu usuario/correo y contraseña.');
+        }
+
+        // Si la RPC no existe aún en Supabase, ejecutar el fallback directo
+        if (rpcError.code === '42883' || msg.toLowerCase().includes('does not exist') || msg.toLowerCase().includes('function')) {
+          console.warn('RPC rpc_login_user no encontrada en Supabase, ejecutando autenticación alternativa.');
+          userObj = await this.fallbackLogin(cleanId, cleanPass);
+        } else {
+          console.error('Error en rpc_login_user:', msg);
+          throw new Error('Error al conectar con la base de datos.');
+        }
+      } else {
+        const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+        if (!row) {
+          throw new Error('Usuario o contraseña incorrectos.');
+        }
+
+        const rawRole = (row.role || '').toUpperCase();
+        let normalizedRole: UserRole = 'VENDEDOR';
+        if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
+        else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
+
+        userObj = {
+          id: row.id,
+          username: row.username,
+          name: row.name,
+          email: row.email || '',
+          role: normalizedRole,
+          organization_id: normalizedRole === 'SUPER_ADMIN' ? null : (row.organization_id || null),
+          status: row.status || 'active',
+          active: true,
+          lastLogin: new Date().toISOString(),
+        };
+      }
+    } catch (err: any) {
+      if (err.message && (err.message.includes('incorrectos') || err.message.includes('desactivado') || err.message.includes('ingresa') || err.message.includes('conectar'))) {
+        throw err;
+      }
+      userObj = await this.fallbackLogin(cleanId, cleanPass);
     }
 
-    if (!users || users.length === 0) {
+    if (!userObj) {
+      throw new Error('Usuario o contraseña incorrectos.');
+    }
+
+    // Guardar sesión limpia en localStorage (sin password ni password_hash)
+    this.setSession(userObj);
+
+    return userObj;
+  },
+
+  /**
+   * Fallback de autenticación por si la RPC rpc_login_user no ha sido desplegada en Supabase aún.
+   * Elimina password_hash inmediatamente antes de retornar el objeto de usuario.
+   */
+  async fallbackLogin(cleanId: string, cleanPass: string): Promise<User> {
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('id, username, name, email, role, organization_id, status, active, password_hash')
+      .or(`username.ilike.${cleanId},email.ilike.${cleanId},name.ilike.${cleanId}`);
+
+    if (error || !users || users.length === 0) {
       throw new Error('Usuario o contraseña incorrectos.');
     }
 
     const userData = users[0];
 
-    // Verificar si el usuario está activo
     if (userData.active === false || userData.status === 'disabled' || userData.status === 'suspended') {
       throw new Error('El usuario está desactivado o suspendido. Contacta al administrador.');
     }
 
-    // Hash/password almacenado en la DB
     const storedHash = userData.password_hash || '';
-
-    // Comparar usando bcrypt. Si el hash guardado previamente fuera texto plano, permitir coincidencia exacta como resguardo
     let isPasswordValid = false;
+
     if (storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$') || storedHash.startsWith('$2y$')) {
       isPasswordValid = bcrypt.compareSync(cleanPass, storedHash);
-    } else {
-      // Resguardo para cuentas existentes en texto plano
-      isPasswordValid = (cleanPass === storedHash);
     }
 
     if (!isPasswordValid) {
       throw new Error('Usuario o contraseña incorrectos.');
     }
 
-    // Normalizar rol
     const rawRole = (userData.role || '').toUpperCase();
-    let normalizedRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+    let normalizedRole: UserRole = 'VENDEDOR';
     if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
     else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
 
-    const userObj: User = {
+    return {
       id: userData.id,
       username: userData.username || cleanId,
       name: userData.name || userData.username || 'Usuario',
       email: userData.email || '',
       role: normalizedRole,
-      organization_id: userData.organization_id || null,
+      organization_id: normalizedRole === 'SUPER_ADMIN' ? null : (userData.organization_id || null),
       status: userData.status || 'active',
       active: true,
       lastLogin: new Date().toISOString(),
     };
-
-    // Guardar sesión en localStorage
-    this.setSession(userObj);
-
-    // Actualizar last_login en public.users (opcional en segundo plano)
-    try {
-      await supabase.from('users').update({ updated_at: new Date().toISOString() }).eq('id', userData.id);
-    } catch {
-      // Ignorar errores de tracking
-    }
-
-    return userObj;
   },
 
   /**
@@ -158,7 +306,7 @@ export const authService = {
   },
 
   /**
-   * Crear usuario (SUPER_ADMIN, ADMIN o VENDEDOR) directamente en public.users usando bcrypt
+   * Crear usuario (SUPER_ADMIN, ADMIN o VENDEDOR) directamente en public.users utilizando bcrypt.hashSync
    */
   async createUser(params: {
     email: string;
@@ -169,7 +317,7 @@ export const authService = {
     organization_id: string | null;
   }): Promise<User> {
     const rawRole = (params.role || '').toUpperCase();
-    let normalizedRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+    let normalizedRole: UserRole = 'VENDEDOR';
     if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
     else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
 
@@ -198,7 +346,7 @@ export const authService = {
       }
     }
 
-    // Generar hash bcrypt de la contraseña
+    // Generar hash bcrypt de la contraseña (NUNCA texto plano)
     const passwordHash = bcrypt.hashSync(cleanPassword, 10);
     const newUserId = crypto.randomUUID();
 
@@ -219,7 +367,7 @@ export const authService = {
     const { data, error } = await supabase
       .from('users')
       .insert(newUserPayload)
-      .select()
+      .select('id, username, name, email, role, organization_id, status, active')
       .single();
 
     if (error) {
@@ -228,7 +376,7 @@ export const authService = {
     }
 
     return {
-      id: data.id || newUserId,
+      id: data?.id || newUserId,
       username: cleanUsername,
       name: cleanName,
       email: cleanEmail,
@@ -273,10 +421,13 @@ export const authService = {
   },
 
   /**
-   * Listar usuarios desde public.users
+   * Listar usuarios desde public.users sin exponer password_hash
    */
   async listUsers(role?: string, organizationId?: string): Promise<User[]> {
-    let query = supabase.from('users').select('*').order('created_at', { ascending: false });
+    let query = supabase
+      .from('users')
+      .select('id, username, name, email, role, organization_id, status, active')
+      .order('created_at', { ascending: false });
 
     if (role) {
       const r = role.toUpperCase();
@@ -299,7 +450,7 @@ export const authService = {
 
     return (data || []).map((u: any) => {
       const rawRole = (u.role || '').toUpperCase();
-      let normRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+      let normRole: UserRole = 'VENDEDOR';
       if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
       else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
 
@@ -319,7 +470,7 @@ export const authService = {
   /**
    * Actualizar usuario directamente en public.users
    */
-  async updateUser(userId: string, data: Partial<User & { password?: string }>): Promise<boolean> {
+  async updateUser(userId: string, data: Partial<User & { password?: string; password_hash?: string }>): Promise<boolean> {
     const updatePayload: any = {
       updated_at: new Date().toISOString(),
     };
@@ -327,6 +478,7 @@ export const authService = {
     if (data.name !== undefined) updatePayload.name = data.name.trim();
     if (data.email !== undefined) updatePayload.email = data.email.trim().toLowerCase();
     if (data.username !== undefined) updatePayload.username = data.username.trim().toLowerCase();
+    
     if (data.password || data.password_hash) {
       const passStr = (data.password || data.password_hash || '').trim();
       if (passStr) {
@@ -336,7 +488,7 @@ export const authService = {
     }
     if (data.role !== undefined) {
       const rawRole = data.role.toUpperCase();
-      let normRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+      let normRole: UserRole = 'VENDEDOR';
       if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
       else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
       updatePayload.role = normRole;

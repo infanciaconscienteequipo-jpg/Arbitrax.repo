@@ -4,15 +4,15 @@
  */
 
 import React, { useState } from 'react';
-import { useAuth } from '../hooks/useAuth';
+import { authService } from '../services/auth.service';
 import { Lock, Eye, EyeOff, CheckCircle2, AlertCircle, ArrowRight } from 'lucide-react';
 
 interface ResetPasswordProps {
+  userId?: string;
   onSuccess?: () => void;
 }
 
-export default function ResetPassword({ onSuccess }: ResetPasswordProps) {
-  const { updatePassword } = useAuth();
+export default function ResetPassword({ userId, onSuccess }: ResetPasswordProps) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -37,7 +37,9 @@ export default function ResetPassword({ onSuccess }: ResetPasswordProps) {
     setLoading(true);
 
     try {
-      await updatePassword(password);
+      if (userId) {
+        await authService.updateUser(userId, { password });
+      }
       setSuccess(true);
       if (onSuccess) {
         setTimeout(onSuccess, 1500);

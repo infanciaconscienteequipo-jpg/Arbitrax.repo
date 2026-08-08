@@ -35,7 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const activeUser = authService.getCurrentSession();
 
-    if (!activeUser) {
+    if (!activeUser || !activeUser.id) {
       setUser(null);
       setOrganization(null);
       setLoading(false);
@@ -43,8 +43,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      if (activeUser.role !== 'SUPER_ADMIN') {
-        if (!activeUser.organization_id) {
+      // Re-validar la sesión contra la base de datos para asegurar que el usuario sigue activo
+      const freshUser = await authService.validateSession(activeUser.id);
+      if (!freshUser) {
+        console.warn('Usuario inactivo o eliminado en la base de datos');
+        authService.clearSession();
+        setUser(null);
+        setOrganization(null);
+        setError('Su sesión ha expirado o su cuenta ha sido desactivada.');
+        setLoading(false);
+        return;
+      }
+
+      if (freshUser.role !== 'SUPER_ADMIN') {
+        if (!freshUser.organization_id) {
           console.warn('Usuario sin organización asignada');
           authService.clearSession();
           setUser(null);
@@ -54,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const orgData = await organizationService.getById(activeUser.organization_id);
+        const orgData = await organizationService.getById(freshUser.organization_id);
 
         if (!orgData || orgData.active === false || orgData.status !== 'active') {
           console.warn('Organización inactiva o suspendida');
@@ -78,7 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setOrganization(null);
       }
 
-      setUser(activeUser);
+      setUser(freshUser);
     } catch (err: any) {
       console.error('Error al procesar la sesión de usuario:', err);
       setError('Ocurrió un error al validar la sesión de usuario.');
