@@ -26,7 +26,7 @@ export default function Exchanges({
   const [balanceCrypto, setBalanceCrypto] = useState<number>(0);
   const [vendorId, setVendorId] = useState<string>('');
 
-  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'admin';
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
   const isAdmin = currentUser?.role === 'ADMIN' || isSuperAdmin;
   const currentOrgId = currentUser?.organization_id || 'org-1';
 

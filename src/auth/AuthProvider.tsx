@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(null);
         setUser(null);
         setOrganization(null);
-        setError('El usuario autenticado no posee un perfil válido.');
+        setError('El usuario autenticado no posee un perfil registrado.');
         setLoading(false);
         return;
       }
@@ -79,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // 3. Validación de Organización (Obligatoria para ADMIN y SELLER)
+      // 3. Validación de Organización (Obligatoria para ADMIN y VENDEDOR)
       if (userProfile.role !== 'SUPER_ADMIN') {
         if (!userProfile.organization_id) {
           console.warn('Usuario sin organización asignada');

@@ -4,6 +4,7 @@
  */
 
 import { supabase } from '../lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 import { User, Organization } from '../types';
 
 export interface UserProfile extends User {
@@ -14,7 +15,7 @@ export interface UserProfile extends User {
 export const authService = {
   /**
    * Iniciar sesión utilizando Supabase Auth.
-   * Si se provee usuario en lugar de email, busca el correo correspondiente en public.users.
+   * Busca el correo electrónico en public.users si se ingresó un nombre de usuario.
    */
   async login(identifier: string, pass: string) {
     const cleanId = identifier.trim().toLowerCase();
@@ -26,7 +27,6 @@ export const authService = {
 
     let targetEmail = cleanId;
 
-    // Mapa de respaldo para nombres de usuario predeterminados
     const defaultUserMap: Record<string, string> = {
       'superadmin': 'arbitrax19@gmail.com',
       'admin': 'admiarbitrax1@gmail.com',
@@ -50,7 +50,7 @@ export const authService = {
           targetEmail = `${cleanId}@arbitrax.local`;
         }
       } catch (err) {
-        console.warn('Busqueda de usuario por username fallo:', err);
+        console.warn('Búsqueda de usuario por username falló:', err);
         targetEmail = `${cleanId}@arbitrax.local`;
       }
     }
@@ -61,16 +61,13 @@ export const authService = {
         password: cleanPass,
       });
 
-      console.log("LOGIN DATA:", data);
-      console.log("LOGIN ERROR:", error);
-
       if (error) {
         throw error;
       }
 
       return data;
-    } catch (err) {
-      console.error("AUTH ERROR COMPLETO:", err);
+    } catch (err: any) {
+      console.error('Error de autenticación en login:', err);
       throw err;
     }
   },
@@ -125,7 +122,7 @@ export const authService = {
 
   /**
    * Consultar perfil del usuario en public.users mediante auth_user_id = auth.uid()
-   * NUNCA asigna ni genera un rol por defecto si el registro no existe.
+   * NUNCA asigna ni genera un rol por defecto si el registro no existe en public.users.
    */
   async getUserProfile(authUserId: string, email?: string): Promise<UserProfile | null> {
     try {
@@ -154,16 +151,14 @@ export const authService = {
         }
 
         const rawRole = (data.role || '').toUpperCase();
-        let userRole: 'SUPER_ADMIN' | 'ADMIN' | 'SELLER';
+        let userRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR';
 
         if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') {
           userRole = 'SUPER_ADMIN';
         } else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') {
           userRole = 'ADMIN';
-        } else if (rawRole === 'SELLER' || rawRole === 'VENDEDOR' || rawRole === 'OPERATOR') {
-          userRole = 'SELLER';
         } else {
-          userRole = 'SELLER';
+          userRole = 'VENDEDOR';
         }
 
         return {
@@ -176,11 +171,11 @@ export const authService = {
           organization_id: data.organization_id || null,
           status: data.status || 'active',
           active: data.active !== false && data.status === 'active',
-          lastLogin: new Date().toISOString()
+          lastLogin: new Date().toISOString(),
         };
       }
 
-      // Si no existe perfil en public.users, retornar null (NUNCA asignar SUPER_ADMIN por defecto)
+      // Si no existe perfil en public.users, retornar null (NUNCA asignar rol por defecto)
       return null;
     } catch (err) {
       console.error('Error al obtener perfil de usuario de public.users:', err);
@@ -198,8 +193,8 @@ export const authService = {
     let query = supabase.from('users').select('*').order('created_at', { ascending: false });
     if (role) {
       const r = role.toUpperCase();
-      if (r === 'SELLER' || r === 'VENDEDOR') {
-        query = query.or('role.ilike.SELLER,role.ilike.VENDEDOR,role.ilike.vendedor,role.ilike.operator');
+      if (r === 'VENDEDOR' || r === 'VENDEDOR') {
+        query = query.or('role.ilike.VENDEDOR,role.ilike.SELLER,role.ilike.vendedor,role.ilike.operator');
       } else {
         query = query.ilike('role', role);
       }
@@ -214,75 +209,184 @@ export const authService = {
       return [];
     }
 
-    return (data || []).map((u: any) => ({
-      id: u.id,
-      username: u.username || u.email?.split('@')[0] || 'usuario',
-      name: u.name || u.username || 'Usuario',
-      email: u.email,
-      role: (u.role || 'SELLER').toUpperCase(),
-      organization_id: u.organization_id || '',
-      status: u.status || 'active',
-      active: u.active !== false && u.status === 'active',
-      password: u.password,
-    }));
+    return (data || []).map((u: any) => {
+      const rawRole = (u.role || '').toUpperCase();
+      let normRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+      if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
+      else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+
+      return {
+        id: u.id,
+        username: u.username || u.email?.split('@')[0] || 'usuario',
+        name: u.name || u.username || 'Usuario',
+        email: u.email,
+        role: normRole,
+        organization_id: u.organization_id || '',
+        status: u.status || 'active',
+        active: u.active !== false && u.status === 'active',
+        password: u.password,
+      };
+    });
   },
 
   /**
-   * Crear Vendedor en Supabase Auth y public.users mediante rpc_create_seller.
-   * NO inserta ni realiza upsert directamente en public.users.
+   * Crear usuario (VENDEDOR o ADMIN) usando Edge Function `create-user` o cliente aislado sin cambiar la sesión activa del ADMIN.
    */
-  async createSeller(params: {
+  async createUser(params: {
     email: string;
     password?: string;
     name: string;
     username: string;
+    role: 'ADMIN' | 'VENDEDOR' | 'SUPER_ADMIN' | string;
     organization_id: string;
   }): Promise<UserProfile> {
+    const rawRole = (params.role || '').toUpperCase();
+    let normalizedRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+    if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
+    else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
+
     const cleanEmail = params.email.trim().toLowerCase();
     const cleanPassword = params.password ? params.password.trim() : 'Arbitrax.2006';
     const cleanUsername = params.username.trim().toLowerCase();
     const cleanName = params.name.trim();
 
-    if (!params.organization_id) {
-      throw new Error('El vendedor debe heredarse de la organización activa del administrador.');
+    if (!params.organization_id && normalizedRole !== 'SUPER_ADMIN') {
+      throw new Error('El usuario debe pertenecer a una organización válida.');
     }
 
-    // 1. Crear usuario en auth.users vía signUp de Supabase Auth
-    const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+    // 1. Invocar la Edge Function create-user (preserva 100% la sesión del ADMIN)
+    try {
+      const { data: edgeData, error: edgeErr } = await supabase.functions.invoke('create-user', {
+        body: {
+          email: cleanEmail,
+          password: cleanPassword,
+          username: cleanUsername,
+          name: cleanName,
+          organization_id: params.organization_id,
+          role: normalizedRole,
+        },
+      });
+
+      if (!edgeErr && edgeData && !edgeData.error && edgeData.auth_user_id) {
+        return {
+          id: edgeData.auth_user_id,
+          auth_user_id: edgeData.auth_user_id,
+          username: cleanUsername,
+          name: cleanName,
+          email: cleanEmail,
+          role: normalizedRole,
+          organization_id: params.organization_id,
+          status: 'active',
+          active: true,
+          password: cleanPassword,
+        };
+      }
+
+      if (edgeData?.error) {
+        throw new Error(edgeData.error);
+      }
+
+      if (edgeErr) {
+        console.warn('Invocación de Edge Function devolvió error, ejecutando flujo de resguardo aislado:', edgeErr.message);
+      }
+    } catch (err: any) {
+      // Si el error es un mensaje de negocio explicito (e.g. usuario existe, sin permisos), no continuar con fallback
+      if (err?.message && (err.message.includes('ya existe') || err.message.includes('permisos') || err.message.includes('VENDEDOR') || err.message.includes('organización'))) {
+        throw err;
+      }
+      console.warn('Excepción invocando Edge Function create-user, ejecutando resguardo aislado:', err?.message);
+    }
+
+    // 2. Flujo de Resguardo Aislado: Usar un cliente Supabase con persistSession = false
+    // para NUNCA alterar ni cerrar la sesión del ADMIN en la ventana del navegador.
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+    const isolatedClient = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+
+    const { data: signUpData, error: signUpErr } = await isolatedClient.auth.signUp({
       email: cleanEmail,
       password: cleanPassword,
       options: {
         data: {
           name: cleanName,
           username: cleanUsername,
-          role: 'SELLER',
+          role: normalizedRole,
           organization_id: params.organization_id,
         },
       },
     });
 
     if (signUpErr) {
-      console.error('Error al registrar usuario en Supabase Auth:', signUpErr.message);
+      console.error('Error al registrar en Supabase Auth (aislado):', signUpErr.message);
       throw new Error(signUpErr.message);
     }
 
     const authUserId = signUpData?.user?.id;
     if (!authUserId) {
-      throw new Error('No se pudo obtener el auth_user_id de Supabase Auth.');
+      throw new Error('No se pudo obtener el ID del usuario en Supabase Auth.');
     }
 
-    // 2. Ejecutar rpc_create_seller con p_auth_user_id, p_organization_id, p_username, p_name, p_email
-    const { error: rpcErr } = await supabase.rpc('rpc_create_seller', {
-      p_auth_user_id: authUserId,
-      p_organization_id: params.organization_id,
-      p_username: cleanUsername,
-      p_name: cleanName,
-      p_email: cleanEmail,
-    });
+    // 3. Ejecutar RPC correspondientes utilizando el cliente del ADMIN (mantiene credenciales)
+    let rpcErr: any = null;
 
+    if (normalizedRole === 'VENDEDOR') {
+      const { error } = await supabase.rpc('rpc_create_seller', {
+        p_auth_user_id: authUserId,
+        p_organization_id: params.organization_id,
+        p_username: cleanUsername,
+        p_name: cleanName,
+        p_email: cleanEmail,
+      });
+      rpcErr = error;
+    } else if (normalizedRole === 'ADMIN') {
+      const { error } = await supabase.rpc('rpc_create_admin', {
+        p_email: cleanEmail,
+        p_password: cleanPassword,
+        p_name: cleanName,
+        p_username: cleanUsername,
+        p_organization_id: params.organization_id,
+      });
+      rpcErr = error;
+
+      if (!rpcErr) {
+        await supabase.from('users').update({ auth_user_id: authUserId }).eq('email', cleanEmail);
+      }
+    } else {
+      const { error } = await supabase.from('users').upsert({
+        id: authUserId,
+        auth_user_id: authUserId,
+        username: cleanUsername,
+        name: cleanName,
+        email: cleanEmail,
+        role: normalizedRole,
+        organization_id: params.organization_id,
+        active: true,
+        status: 'active',
+        created_at: new Date().toISOString(),
+      });
+      rpcErr = error;
+    }
+
+    // 4. Si la inserción en public.users falla: eliminar inmediatamente el usuario recién creado de auth.users (0 huérfanos)
     if (rpcErr) {
-      console.error('Error al ejecutar rpc_create_seller:', rpcErr.message);
-      throw new Error(rpcErr.message);
+      console.error('Error al registrar en public.users, revirtiendo usuario de auth.users:', rpcErr.message);
+
+      try {
+        await supabase.functions.invoke('delete-user', {
+          body: { user_id: authUserId },
+        });
+      } catch (cleanupErr) {
+        console.warn('Error al ejecutar cleanup de usuario huérfano:', cleanupErr);
+      }
+
+      throw new Error(rpcErr.message || 'Error al guardar el usuario en public.users');
     }
 
     return {
@@ -291,7 +395,7 @@ export const authService = {
       username: cleanUsername,
       name: cleanName,
       email: cleanEmail,
-      role: 'SELLER' as any,
+      role: normalizedRole,
       organization_id: params.organization_id,
       status: 'active',
       active: true,
@@ -300,7 +404,23 @@ export const authService = {
   },
 
   /**
-   * Crear Administrador vinculado a una Organización real en Supabase (auth.users y public.users).
+   * Crear Vendedor para la organización del Administrador.
+   */
+  async createSeller(params: {
+    email: string;
+    password?: string;
+    name: string;
+    username: string;
+    organization_id: string;
+  }): Promise<UserProfile> {
+    return this.createUser({
+      ...params,
+      role: 'VENDEDOR',
+    });
+  },
+
+  /**
+   * Crear Administrador vinculado a una Organización real en Supabase.
    */
   async createAdmin(params: {
     email: string;
@@ -317,113 +437,7 @@ export const authService = {
   },
 
   /**
-   * Crear un nuevo usuario (Administrador o Vendedor) en Supabase.
-   */
-  async createUser(params: {
-    email: string;
-    password?: string;
-    name: string;
-    username: string;
-    role: 'ADMIN' | 'VENDEDOR' | 'SELLER' | 'SUPER_ADMIN' | string;
-    organization_id: string;
-  }): Promise<UserProfile> {
-    const roleUpper = (params.role || '').toUpperCase();
-    if (roleUpper === 'SELLER' || roleUpper === 'VENDEDOR') {
-      return this.createSeller({
-        email: params.email,
-        password: params.password,
-        name: params.name,
-        username: params.username,
-        organization_id: params.organization_id,
-      });
-    }
-
-    const cleanEmail = params.email.trim().toLowerCase();
-    const cleanPassword = params.password || 'Arbitrax.2006';
-    const cleanUsername = params.username.trim().toLowerCase();
-    let authUserId: string | null = null;
-
-    // 1. Crear usuario en auth.users vía signUp de Supabase Auth
-    try {
-      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password: cleanPassword,
-        options: {
-          data: {
-            name: params.name,
-            username: cleanUsername,
-            role: params.role,
-            organization_id: params.organization_id,
-          },
-        },
-      });
-
-      if (signUpData?.user?.id) {
-        authUserId = signUpData.user.id;
-      } else if (signUpErr) {
-        console.warn('Registro por signUp en Supabase Auth:', signUpErr.message);
-      }
-    } catch (err) {
-      console.warn('Excepción al registrar usuario en Supabase Auth:', err);
-    }
-
-    // 2. Invocación de RPCs de Supabase (rpc_create_admin)
-    try {
-      if (params.role === 'ADMIN') {
-        await supabase.rpc('rpc_create_admin', {
-          p_email: cleanEmail,
-          p_password: cleanPassword,
-          p_name: params.name,
-          p_username: cleanUsername,
-          p_organization_id: params.organization_id,
-        });
-      }
-    } catch (rpcErr) {
-      console.warn('Excepción al ejecutar RPCs de Supabase:', rpcErr);
-    }
-
-    // 3. Crear o actualizar en public.users de Supabase
-    const userPayload: any = {
-      username: cleanUsername,
-      name: params.name,
-      email: cleanEmail,
-      role: params.role,
-      organization_id: params.organization_id,
-      status: 'active',
-      active: true,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (authUserId) {
-      userPayload.id = authUserId;
-      userPayload.auth_user_id = authUserId;
-    }
-
-    const { data: insertedUser, error: upsertErr } = await supabase.from('users').upsert(userPayload).select().maybeSingle();
-
-    if (upsertErr) {
-      console.warn('Upsert en public.users:', upsertErr.message);
-    }
-
-    const finalId = insertedUser?.id || authUserId || `usr-${Date.now()}`;
-
-    return {
-      id: finalId,
-      auth_user_id: authUserId || finalId,
-      username: cleanUsername,
-      name: params.name,
-      email: cleanEmail,
-      role: params.role as any,
-      organization_id: params.organization_id,
-      status: 'active',
-      active: true,
-      password: cleanPassword,
-    };
-  },
-
-  /**
    * Actualizar datos del vendedor utilizando EXCLUSIVAMENTE la RPC rpc_update_seller.
-   * NUNCA utiliza supabase.from("users").update().
    */
   async updateSeller(seller: {
     id: string;
@@ -450,7 +464,6 @@ export const authService = {
 
   /**
    * Archivar/Desactivar vendedor (Soft Delete) ejecutando EXCLUSIVAMENTE la RPC rpc_delete_seller.
-   * No elimina registros físicamente ni llama a auth.users deletion.
    */
   async deleteSeller(userId: string): Promise<boolean> {
     const { error } = await supabase.rpc('rpc_delete_seller', {
@@ -519,5 +532,6 @@ export const authService = {
       return false;
     }
     return true;
-  }
+  },
 };
+

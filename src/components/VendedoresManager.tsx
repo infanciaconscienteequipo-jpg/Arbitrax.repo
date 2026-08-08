@@ -45,7 +45,7 @@ export default function VendedoresManager({
       const fetchedUsers = await authService.listUsers(undefined, currentUser.organization_id);
       const sellersOnly = fetchedUsers.filter(u => {
         const r = (u.role || '').toUpperCase();
-        return r === 'SELLER' || r === 'VENDEDOR' || r === 'OPERATOR';
+        return r === 'VENDEDOR' || r === 'VENDEDOR' || r === 'VENDEDOR';
       });
       setSellers(sellersOnly);
       if (onUpdateUsers) {
@@ -123,9 +123,8 @@ export default function VendedoresManager({
 
     setLoading(true);
     try {
-      // Flujo de creación:
-      // 1. Supabase Auth (signUp)
-      // 2. rpc_create_seller (p_auth_user_id, p_organization_id, p_username, p_name, p_email)
+      // Flujo de creación de vendedor en Supabase sin alterar la sesión del ADMIN
+      // Edge Function create-user -> rpc_create_seller -> public.users
       const createdUser = await authService.createSeller({
         email: cleanEmail,
         password: cleanPassword,
