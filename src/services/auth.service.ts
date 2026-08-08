@@ -174,128 +174,56 @@ export const authService = {
    * La verificación de contraseña se realiza EN LA BASE DE DATOS. NUNCA se envía password_hash al cliente.
    */
   async login(identifier: string, pass: string): Promise<User> {
-    const cleanId = identifier.trim().toLowerCase();
-    const cleanPass = pass.trim();
-
-    if (!cleanId || !cleanPass) {
+    if (!identifier || !pass) {
       throw new Error('Por favor, ingresa tu usuario/correo y contraseña.');
     }
 
-    let userObj: User | null = null;
+    const { data: rpcData, error: rpcError } = await supabase.rpc('rpc_login_user', {
+      p_identifier: identifier,
+      p_password: pass,
+    });
 
-    try {
-      const { data: rpcData, error: rpcError } = await supabase.rpc('rpc_login_user', {
-        p_identifier: cleanId,
-        p_password: cleanPass,
-      });
-
-      if (rpcError) {
-        const msg = rpcError.message || '';
-        if (msg.includes('USER_INACTIVE')) {
-          throw new Error('El usuario está desactivado o suspendido. Contacta al administrador.');
-        }
-        if (msg.includes('USER_NOT_FOUND') || msg.includes('INVALID_PASSWORD')) {
-          throw new Error('Usuario o contraseña incorrectos.');
-        }
-        if (msg.includes('IDENTIFIER_AND_PASSWORD_REQUIRED')) {
-          throw new Error('Por favor, ingresa tu usuario/correo y contraseña.');
-        }
-
-        // Si la RPC no existe aún en Supabase, ejecutar el fallback directo
-        if (rpcError.code === '42883' || msg.toLowerCase().includes('does not exist') || msg.toLowerCase().includes('function')) {
-          console.warn('RPC rpc_login_user no encontrada en Supabase, ejecutando autenticación alternativa.');
-          userObj = await this.fallbackLogin(cleanId, cleanPass);
-        } else {
-          console.error('Error en rpc_login_user:', msg);
-          throw new Error('Error al conectar con la base de datos.');
-        }
-      } else {
-        const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
-        if (!row) {
-          throw new Error('Usuario o contraseña incorrectos.');
-        }
-
-        const rawRole = (row.role || '').toUpperCase();
-        let normalizedRole: UserRole = 'VENDEDOR';
-        if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
-        else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
-
-        userObj = {
-          id: row.id,
-          username: row.username,
-          name: row.name,
-          email: row.email || '',
-          role: normalizedRole,
-          organization_id: normalizedRole === 'SUPER_ADMIN' ? null : (row.organization_id || null),
-          status: row.status || 'active',
-          active: true,
-          lastLogin: new Date().toISOString(),
-        };
+    if (rpcError) {
+      const msg = rpcError.message || '';
+      if (msg.includes('USER_INACTIVE')) {
+        throw new Error('El usuario está desactivado o suspendido. Contacta al administrador.');
       }
-    } catch (err: any) {
-      if (err.message && (err.message.includes('incorrectos') || err.message.includes('desactivado') || err.message.includes('ingresa') || err.message.includes('conectar'))) {
-        throw err;
+      if (msg.includes('USER_NOT_FOUND') || msg.includes('INVALID_PASSWORD')) {
+        throw new Error('Usuario o contraseña incorrectos.');
       }
-      userObj = await this.fallbackLogin(cleanId, cleanPass);
-    }
-
-    if (!userObj) {
+      if (msg.includes('IDENTIFIER_AND_PASSWORD_REQUIRED')) {
+        throw new Error('Por favor, ingresa tu usuario/correo y contraseña.');
+      }
+      console.error('Error en rpc_login_user:', msg);
       throw new Error('Usuario o contraseña incorrectos.');
     }
+
+    const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+    if (!row) {
+      throw new Error('Usuario o contraseña incorrectos.');
+    }
+
+    const rawRole = (row.role || '').toUpperCase();
+    let normalizedRole: UserRole = 'VENDEDOR';
+    if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
+    else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
+
+    const userObj: User = {
+      id: row.id,
+      username: row.username,
+      name: row.name,
+      email: row.email || '',
+      role: normalizedRole,
+      organization_id: normalizedRole === 'SUPER_ADMIN' ? null : (row.organization_id || null),
+      status: row.status || 'active',
+      active: true,
+      lastLogin: new Date().toISOString(),
+    };
 
     // Guardar sesión limpia en localStorage (sin password ni password_hash)
     this.setSession(userObj);
 
     return userObj;
-  },
-
-  /**
-   * Fallback de autenticación por si la RPC rpc_login_user no ha sido desplegada en Supabase aún.
-   * Elimina password_hash inmediatamente antes de retornar el objeto de usuario.
-   */
-  async fallbackLogin(cleanId: string, cleanPass: string): Promise<User> {
-    const { data: users, error } = await supabase
-      .from('users')
-      .select('id, username, name, email, role, organization_id, status, active, password_hash')
-      .or(`username.ilike.${cleanId},email.ilike.${cleanId},name.ilike.${cleanId}`);
-
-    if (error || !users || users.length === 0) {
-      throw new Error('Usuario o contraseña incorrectos.');
-    }
-
-    const userData = users[0];
-
-    if (userData.active === false || userData.status === 'disabled' || userData.status === 'suspended') {
-      throw new Error('El usuario está desactivado o suspendido. Contacta al administrador.');
-    }
-
-    const storedHash = userData.password_hash || '';
-    let isPasswordValid = false;
-
-    if (storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$') || storedHash.startsWith('$2y$')) {
-      isPasswordValid = bcrypt.compareSync(cleanPass, storedHash);
-    }
-
-    if (!isPasswordValid) {
-      throw new Error('Usuario o contraseña incorrectos.');
-    }
-
-    const rawRole = (userData.role || '').toUpperCase();
-    let normalizedRole: UserRole = 'VENDEDOR';
-    if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
-    else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
-
-    return {
-      id: userData.id,
-      username: userData.username || cleanId,
-      name: userData.name || userData.username || 'Usuario',
-      email: userData.email || '',
-      role: normalizedRole,
-      organization_id: normalizedRole === 'SUPER_ADMIN' ? null : (userData.organization_id || null),
-      status: userData.status || 'active',
-      active: true,
-      lastLogin: new Date().toISOString(),
-    };
   },
 
   /**
