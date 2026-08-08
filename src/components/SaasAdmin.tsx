@@ -277,7 +277,7 @@ export default function SaasAdmin({
       orgName: org.name,
       adminName: org.adminName || linkedAdmin?.name || 'Administrador',
       email: linkedAdmin?.email || linkedAdmin?.username || 'admin@empresa.com',
-      password: linkedAdmin?.password || 'Arbitrax.2006',
+      password: linkedAdmin?.password_hash || 'Arbitrax.2006',
       monthlyFee: org.monthlyFee || 120000,
       fechaIngreso: org.fechaIngreso || org.createdAt || new Date().toISOString().substring(0, 10),
       status: org.status === 'active' ? 'active' : 'suspended',

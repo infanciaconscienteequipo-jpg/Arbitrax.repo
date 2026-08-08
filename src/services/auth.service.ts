@@ -104,7 +104,7 @@ export const authService = {
     }
 
     // Hash/password almacenado en la DB
-    const storedHash = userData.password_hash || userData.password || '';
+    const storedHash = userData.password_hash || '';
 
     // Comparar usando bcrypt. Si el hash guardado previamente fuera texto plano, permitir coincidencia exacta como resguardo
     let isPasswordValid = false;
@@ -208,7 +208,6 @@ export const authService = {
       name: cleanName,
       email: cleanEmail,
       password_hash: passwordHash,
-      password: passwordHash,
       role: normalizedRole,
       organization_id: normalizedRole === 'SUPER_ADMIN' ? null : params.organization_id,
       status: 'active',
@@ -328,10 +327,12 @@ export const authService = {
     if (data.name !== undefined) updatePayload.name = data.name.trim();
     if (data.email !== undefined) updatePayload.email = data.email.trim().toLowerCase();
     if (data.username !== undefined) updatePayload.username = data.username.trim().toLowerCase();
-    if (data.password) {
-      const hash = bcrypt.hashSync(data.password.trim(), 10);
-      updatePayload.password_hash = hash;
-      updatePayload.password = hash;
+    if (data.password || data.password_hash) {
+      const passStr = (data.password || data.password_hash || '').trim();
+      if (passStr) {
+        const hash = bcrypt.hashSync(passStr, 10);
+        updatePayload.password_hash = hash;
+      }
     }
     if (data.role !== undefined) {
       const rawRole = data.role.toUpperCase();

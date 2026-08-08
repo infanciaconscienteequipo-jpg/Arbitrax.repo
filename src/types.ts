@@ -132,7 +132,7 @@ export interface User {
   username: string;
   name: string;
   email?: string;
-  password?: string;
+  password_hash?: string;
   role: UserRole;
   organization_id: string | null;
   status?: 'active' | 'disabled' | 'suspended';

@@ -313,7 +313,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addUser = async (newUser: User) => {
     await authService.createUser({
       email: newUser.email || `${newUser.username}@arbitrax.local`,
-      password: newUser.password,
+      password: newUser.password_hash,
       name: newUser.name,
       username: newUser.username,
       role: newUser.role,
