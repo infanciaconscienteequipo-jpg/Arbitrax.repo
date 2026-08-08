@@ -4,7 +4,6 @@
  */
 
 import { supabase } from '../lib/supabase';
-import { createClient } from '@supabase/supabase-js';
 import { User, Organization } from '../types';
 
 export interface UserProfile extends User {
@@ -230,7 +229,8 @@ export const authService = {
   },
 
   /**
-   * Crear usuario (VENDEDOR o ADMIN) usando Edge Function `create-user` o cliente aislado sin cambiar la sesión activa del ADMIN.
+   * Crear usuario (VENDEDOR o ADMIN) utilizando EXCLUSIVAMENTE la Edge Function `create-user`.
+   * Garantiza la ejecución con SERVICE_ROLE_KEY sin alterar ni cambiar la sesión activa en el cliente.
    */
   async createUser(params: {
     email: string;
@@ -254,149 +254,40 @@ export const authService = {
       throw new Error('El usuario debe pertenecer a una organización válida.');
     }
 
-    // 1. Invocar la Edge Function create-user (preserva 100% la sesión del ADMIN)
-    try {
-      const { data: edgeData, error: edgeErr } = await supabase.functions.invoke('create-user', {
-        body: {
-          email: cleanEmail,
-          password: cleanPassword,
-          username: cleanUsername,
-          name: cleanName,
-          organization_id: params.organization_id,
-          role: normalizedRole,
-        },
-      });
-
-      if (!edgeErr && edgeData && !edgeData.error && edgeData.auth_user_id) {
-        return {
-          id: edgeData.auth_user_id,
-          auth_user_id: edgeData.auth_user_id,
-          username: cleanUsername,
-          name: cleanName,
-          email: cleanEmail,
-          role: normalizedRole,
-          organization_id: params.organization_id,
-          status: 'active',
-          active: true,
-          password: cleanPassword,
-        };
-      }
-
-      if (edgeData?.error) {
-        throw new Error(edgeData.error);
-      }
-
-      if (edgeErr) {
-        console.warn('Invocación de Edge Function devolvió error, ejecutando flujo de resguardo aislado:', edgeErr.message);
-      }
-    } catch (err: any) {
-      // Si el error es un mensaje de negocio explicito (e.g. usuario existe, sin permisos), no continuar con fallback
-      if (err?.message && (err.message.includes('ya existe') || err.message.includes('permisos') || err.message.includes('VENDEDOR') || err.message.includes('organización'))) {
-        throw err;
-      }
-      console.warn('Excepción invocando Edge Function create-user, ejecutando resguardo aislado:', err?.message);
-    }
-
-    // 2. Flujo de Resguardo Aislado: Usar un cliente Supabase con persistSession = false
-    // para NUNCA alterar ni cerrar la sesión del ADMIN en la ventana del navegador.
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-
-    const isolatedClient = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    });
-
-    const { data: signUpData, error: signUpErr } = await isolatedClient.auth.signUp({
-      email: cleanEmail,
-      password: cleanPassword,
-      options: {
-        data: {
-          name: cleanName,
-          username: cleanUsername,
-          role: normalizedRole,
-          organization_id: params.organization_id,
-        },
-      },
-    });
-
-    if (signUpErr) {
-      console.error('Error al registrar en Supabase Auth (aislado):', signUpErr.message);
-      throw new Error(signUpErr.message);
-    }
-
-    const authUserId = signUpData?.user?.id;
-    if (!authUserId) {
-      throw new Error('No se pudo obtener el ID del usuario en Supabase Auth.');
-    }
-
-    // 3. Ejecutar RPC correspondientes utilizando el cliente del ADMIN (mantiene credenciales)
-    let rpcErr: any = null;
-
-    if (normalizedRole === 'VENDEDOR') {
-      const { error } = await supabase.rpc('rpc_create_seller', {
-        p_auth_user_id: authUserId,
-        p_organization_id: params.organization_id,
-        p_username: cleanUsername,
-        p_name: cleanName,
-        p_email: cleanEmail,
-      });
-      rpcErr = error;
-    } else if (normalizedRole === 'ADMIN') {
-      const { error } = await supabase.rpc('rpc_create_admin', {
-        p_email: cleanEmail,
-        p_password: cleanPassword,
-        p_name: cleanName,
-        p_username: cleanUsername,
-        p_organization_id: params.organization_id,
-      });
-      rpcErr = error;
-
-      if (!rpcErr) {
-        await supabase.from('users').update({ auth_user_id: authUserId }).eq('email', cleanEmail);
-      }
-    } else {
-      const { error } = await supabase.from('users').upsert({
-        id: authUserId,
-        auth_user_id: authUserId,
+    // Invocación a la Edge Function `create-user` que ejecuta createUser vía Admin API (SERVICE_ROLE_KEY)
+    const { data: edgeData, error: edgeErr } = await supabase.functions.invoke('create-user', {
+      body: {
+        email: cleanEmail,
+        password: cleanPassword,
         username: cleanUsername,
         name: cleanName,
-        email: cleanEmail,
-        role: normalizedRole,
         organization_id: params.organization_id,
-        active: true,
-        status: 'active',
-        created_at: new Date().toISOString(),
-      });
-      rpcErr = error;
+        role: normalizedRole,
+      },
+    });
+
+    if (edgeErr) {
+      console.error('Error al invocar Edge Function create-user:', edgeErr);
+      throw new Error(edgeErr.message || 'Error de conexión con la Edge Function create-user');
     }
 
-    // 4. Si la inserción en public.users falla: eliminar inmediatamente el usuario recién creado de auth.users (0 huérfanos)
-    if (rpcErr) {
-      console.error('Error al registrar en public.users, revirtiendo usuario de auth.users:', rpcErr.message);
+    if (edgeData?.error) {
+      console.error('Error devuelto por la Edge Function create-user:', edgeData.error);
+      throw new Error(edgeData.error);
+    }
 
-      try {
-        await supabase.functions.invoke('delete-user', {
-          body: { user_id: authUserId },
-        });
-      } catch (cleanupErr) {
-        console.warn('Error al ejecutar cleanup de usuario huérfano:', cleanupErr);
-      }
-
-      throw new Error(rpcErr.message || 'Error al guardar el usuario en public.users');
+    if (!edgeData || !edgeData.auth_user_id) {
+      throw new Error('La Edge Function create-user no devolvió el ID del usuario creado.');
     }
 
     return {
-      id: authUserId,
-      auth_user_id: authUserId,
+      id: edgeData.auth_user_id,
+      auth_user_id: edgeData.auth_user_id,
       username: cleanUsername,
       name: cleanName,
       email: cleanEmail,
       role: normalizedRole,
-      organization_id: params.organization_id,
+      organization_id: edgeData.organization_id || params.organization_id,
       status: 'active',
       active: true,
       password: cleanPassword,

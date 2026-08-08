@@ -151,16 +151,23 @@ export const dashboardService = {
         featureFlags: o.feature_flags || { p2pCalculator: true, shiftClosing: true, advancedReports: true, customCryptos: true, auditLogs: true },
       }));
 
-      const users: User[] = (usersRes.data || []).map((u: any) => ({
-        id: u.id,
-        username: u.username,
-        name: u.name,
-        email: u.email,
-        role: u.role,
-        organization_id: u.organization_id,
-        status: u.status,
-        active: u.active,
-      }));
+      const users: User[] = (usersRes.data || []).map((u: any) => {
+        const rawRole = (u.role || '').toUpperCase();
+        let normRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+        if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
+        else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+
+        return {
+          id: u.id,
+          username: u.username,
+          name: u.name,
+          email: u.email,
+          role: normRole,
+          organization_id: u.organization_id,
+          status: u.status,
+          active: u.active,
+        };
+      });
 
       const wallets: Wallet[] = (walletsRes.data || []).map((w: any) => ({
         id: w.id,

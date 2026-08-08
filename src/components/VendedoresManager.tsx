@@ -45,7 +45,7 @@ export default function VendedoresManager({
       const fetchedUsers = await authService.listUsers(undefined, currentUser.organization_id);
       const sellersOnly = fetchedUsers.filter(u => {
         const r = (u.role || '').toUpperCase();
-        return r === 'VENDEDOR' || r === 'VENDEDOR' || r === 'VENDEDOR';
+        return r === 'VENDEDOR' || r === 'SELLER';
       });
       setSellers(sellersOnly);
       if (onUpdateUsers) {
@@ -328,11 +328,11 @@ export default function VendedoresManager({
                 Rol / Permisos
               </label>
               <select
-                value="SELLER"
+                value="VENDEDOR"
                 disabled
                 className="w-full px-4 py-2.5 bg-binance-black/60 border border-binance-border rounded-xl text-binance-green font-bold text-sm outline-hidden font-mono cursor-not-allowed opacity-90"
               >
-                <option value="SELLER">SELLER (VENDEDOR / OPERADOR)</option>
+                <option value="VENDEDOR">VENDEDOR</option>
               </select>
             </div>
 
@@ -420,7 +420,7 @@ export default function VendedoresManager({
                         </div>
 
                         <span className="px-2 py-0.5 rounded text-[9px] font-extrabold tracking-widest uppercase font-mono bg-binance-green/10 text-binance-green border border-binance-green/20">
-                          {u.role || 'SELLER'}
+                          {u.role || 'VENDEDOR'}
                         </span>
                       </div>
 

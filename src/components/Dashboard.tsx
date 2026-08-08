@@ -53,7 +53,7 @@ export default function Dashboard({
   };
 
   // Get Vendors in Org
-  const vendorsInOrg = users.filter(u => u.organization_id === currentOrgId && (u.role === 'VENDEDOR' || u.role === 'vendedor'));
+  const vendorsInOrg = users.filter(u => u.organization_id === currentOrgId && ((u.role || '').toUpperCase() === 'VENDEDOR' || (u.role || '').toUpperCase() === 'SELLER'));
 
   // Filter Wallets and Exchanges
   const filteredWallets = wallets.filter(w => {

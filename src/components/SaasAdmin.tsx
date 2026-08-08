@@ -181,11 +181,11 @@ export default function SaasAdmin({
   const suspendedOrgs = useMemo(() => organizationsList.filter(o => o.status === 'suspended' || o.status === 'disabled').length, [organizationsList]);
   
   const totalVendors = useMemo(() => {
-    return usersList.filter(u => u.role === 'VENDEDOR' || u.role === 'vendedor' || u.role === 'operator').length;
+    return usersList.filter(u => (u.role || '').toUpperCase() === 'VENDEDOR' || (u.role || '').toUpperCase() === 'SELLER').length;
   }, [usersList]);
 
   const totalAdmins = useMemo(() => {
-    return usersList.filter(u => u.role === 'ADMIN' || u.role === 'admin').length;
+    return usersList.filter(u => (u.role || '').toUpperCase() === 'ADMIN').length;
   }, [usersList]);
 
   // Total Monthly Revenue in ARS from active organizations
@@ -211,12 +211,12 @@ export default function SaasAdmin({
 
   // Helper: Count vendors per organization
   const getVendorCountForOrg = (orgId: string) => {
-    return usersList.filter(u => u.organization_id === orgId && (u.role === 'VENDEDOR' || u.role === 'vendedor' || u.role === 'operator')).length;
+    return usersList.filter(u => u.organization_id === orgId && ((u.role || '').toUpperCase() === 'VENDEDOR' || (u.role || '').toUpperCase() === 'SELLER')).length;
   };
 
   // Helper: Get linked admin for an organization
   const getAdminForOrg = (orgId: string) => {
-    return usersList.find(u => u.organization_id === orgId && (u.role === 'ADMIN' || u.role === 'admin'));
+    return usersList.find(u => u.organization_id === orgId && (u.role || '').toUpperCase() === 'ADMIN');
   };
 
   // Toggle active / suspended state en Supabase
@@ -1066,7 +1066,7 @@ export default function SaasAdmin({
               </thead>
               <tbody className="divide-y divide-binance-border/30">
                 {usersList
-                  .filter(u => u.role === 'ADMIN' || u.role === 'admin')
+                  .filter(u => (u.role || '').toUpperCase() === 'ADMIN')
                   .map(admin => {
                     const linkedOrg = organizationsList.find(o => o.id === admin.organization_id);
                     const isAct = admin.status === 'active' || admin.active !== false;

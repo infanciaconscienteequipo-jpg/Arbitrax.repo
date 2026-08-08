@@ -125,7 +125,7 @@ export interface Shift {
   organization_id?: string;
 }
 
-export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'SELLER' | 'VENDEDOR' | 'operator' | 'admin' | 'vendedor';
+export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR';
 
 export interface User {
   id?: string;
