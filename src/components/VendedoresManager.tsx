@@ -291,9 +291,8 @@ export default function VendedoresManager({
 
             {/* Campo 3: Email (NUEVO CAMPO OBLIGATORIO) ubicado DEBAJO de Usuario */}
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block flex items-center justify-between">
-                <span>Correo Electrónico *</span>
-                <span className="text-[9px] text-binance-yellow font-normal font-mono">Para Supabase Auth</span>
+              <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
+                Correo Electrónico *
               </label>
               <div className="relative">
                 <input
@@ -370,9 +369,6 @@ export default function VendedoresManager({
                 />
                 <span>Mostrar vendedores archivados</span>
               </label>
-              <span className="text-[10px] text-binance-gray font-mono">
-                Org: <span className="text-binance-yellow font-bold">{currentUser?.organization_id || 'Sin Org'}</span>
-              </span>
             </div>
           </div>
 
@@ -503,13 +499,6 @@ export default function VendedoresManager({
                 <p className="text-[10px] text-binance-yellow">Utilice el formulario para crear el primer vendedor.</p>
               </div>
             )}
-          </div>
-
-          <div className="p-3 bg-binance-black/20 border border-binance-border rounded-xl flex gap-3 text-binance-gray text-[10px] leading-relaxed">
-            <UserCheck className="w-4 h-4 shrink-0 text-binance-yellow mt-0.5" />
-            <p>
-              Todos los vendedores creados están registrados en <strong>public.users</strong> y pertenecen a la organización activa. Pueden iniciar sesión con su correo o usuario y contraseña.
-            </p>
           </div>
         </div>
       </div>
