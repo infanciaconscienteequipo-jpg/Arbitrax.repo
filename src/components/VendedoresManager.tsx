@@ -70,7 +70,7 @@ export default function VendedoresManager({
     const cleanName = name.trim();
     const cleanUsername = username.trim().toLowerCase();
     const cleanEmail = email.trim().toLowerCase();
-    const cleanPassword = password.trim();
+    const rawPassword = password;
 
     if (!cleanName) {
       setErrorMsg('El nombre completo es obligatorio.');
@@ -93,12 +93,12 @@ export default function VendedoresManager({
       return;
     }
 
-    if (!cleanPassword) {
+    if (!rawPassword) {
       setErrorMsg('La contraseña es obligatoria.');
       return;
     }
 
-    if (cleanPassword.length < 6) {
+    if (rawPassword.length < 6) {
       setErrorMsg('La contraseña debe tener al menos 6 caracteres.');
       return;
     }
@@ -123,11 +123,10 @@ export default function VendedoresManager({
 
     setLoading(true);
     try {
-      // Flujo de creación de vendedor en Supabase sin alterar la sesión del ADMIN
-      // Edge Function create-user -> rpc_create_seller -> public.users
+      // Flujo de creación de vendedor en Supabase llamando a Edge Function create-user
       const createdUser = await authService.createSeller({
         email: cleanEmail,
-        password: cleanPassword,
+        password: rawPassword,
         name: cleanName,
         username: cleanUsername,
         organization_id: orgId,
