@@ -48,7 +48,7 @@ export default function Movimientos({
   const [customEndDate, setCustomEndDate] = useState('');
   const [customEndTime, setCustomEndTime] = useState('');
 
-  const currentOrgId = currentUser?.organization_id || 'org-1';
+  const currentOrgId = currentUser?.organization_id || '';
 
   // Auto-calc unit price: Monto ARS / Cantidad Crypto
   const calculatedUnitPrice = (typeof totalPesosInput === 'number' && typeof cryptoQtyInput === 'number' && cryptoQtyInput > 0)

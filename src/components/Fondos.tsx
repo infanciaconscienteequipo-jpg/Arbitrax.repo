@@ -39,7 +39,7 @@ export default function Fondos({
   const [vendorFilter, setVendorFilter] = useState('all');
   const [searchPerson, setSearchPerson] = useState('');
 
-  const currentOrgId = currentUser?.organization_id || 'org-1';
+  const currentOrgId = currentUser?.organization_id || '';
 
   // Unique vendors list
   const uniqueVendors = Array.from(

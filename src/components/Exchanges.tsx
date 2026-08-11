@@ -28,7 +28,7 @@ export default function Exchanges({
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
   const isAdmin = currentUser?.role === 'ADMIN' || isSuperAdmin;
-  const currentOrgId = currentUser?.organization_id || 'org-1';
+  const currentOrgId = currentUser?.organization_id || '';
 
   // Available Vendors
   const vendorsList = users.length > 0 ? users : Array.from(

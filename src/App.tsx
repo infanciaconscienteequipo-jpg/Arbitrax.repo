@@ -95,6 +95,7 @@ export default function App() {
   // Cargar datos remotos desde Supabase
   useEffect(() => {
     if (!authUser) return;
+    if (authUser.role !== 'SUPER_ADMIN' && !authUser.organization_id) return;
 
     dashboardService.fetchAppState(authUser?.organization_id || undefined).then(remoteState => {
       if (remoteState && Object.keys(remoteState).length > 0) {

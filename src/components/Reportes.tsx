@@ -28,7 +28,7 @@ export default function Reportes({
   const [customEndDate, setCustomEndDate] = useState('');
   const [customEndTime, setCustomEndTime] = useState('');
 
-  const currentOrgId = currentUser?.organization_id || 'org-1';
+  const currentOrgId = currentUser?.organization_id || '';
 
   // Extract unique vendors for filter dropdown
   const uniqueVendors = Array.from(

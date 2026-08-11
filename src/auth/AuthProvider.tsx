@@ -7,6 +7,7 @@ import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import { User, Organization } from '../types';
 import { authService } from '../services/auth.service';
 import { organizationService } from '../services/organization.service';
+import { supabase } from '../lib/supabase';
 
 export interface AuthContextType {
   user: User | null;
@@ -25,56 +26,51 @@ export const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
+  const [rawSession, setRawSession] = useState<any | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [subscriptionWarning, setSubscriptionWarning] = useState<string | null>(null);
 
-  const loadUserSession = async () => {
-    setLoading(true);
-    setSubscriptionWarning(null);
-
-    const activeUser = authService.getCurrentSession();
-
-    if (!activeUser || !activeUser.id) {
+  const processSessionUser = async (sessionUser: any) => {
+    if (!sessionUser || !sessionUser.id) {
       setUser(null);
       setOrganization(null);
-      setLoading(false);
+      setSubscriptionWarning(null);
       return;
     }
 
     try {
-      // Re-validar la sesión contra la base de datos para asegurar que el usuario sigue activo
-      const freshUser = await authService.validateSession(activeUser.id);
-      if (!freshUser) {
-        console.warn('Usuario inactivo o eliminado en la base de datos');
-        authService.clearSession();
+      // 1. Obtener perfil desde public.users exclusivamente por auth_user_id
+      const profile = await authService.getProfileByAuthUserId(sessionUser.id);
+      if (!profile) {
         setUser(null);
         setOrganization(null);
-        setError('Su sesión ha expirado o su cuenta ha sido desactivada.');
-        setLoading(false);
+        setError('La cuenta de autenticación no está vinculada a ArbitraX.');
         return;
       }
 
-      if (freshUser.role !== 'SUPER_ADMIN') {
-        if (!freshUser.organization_id) {
-          console.warn('Usuario sin organización asignada');
-          authService.clearSession();
+      if (!profile.active || profile.status === 'disabled' || profile.status === 'suspended') {
+        setUser(null);
+        setOrganization(null);
+        setError('El usuario está desactivado o suspendido. Contacta al administrador.');
+        return;
+      }
+
+      // 2. Validar organización para ADMIN / VENDEDOR
+      if (profile.role !== 'SUPER_ADMIN') {
+        if (!profile.organization_id) {
           setUser(null);
           setOrganization(null);
-          setError('Su cuenta no tiene asignada una organización válida.');
-          setLoading(false);
+          setError('Tu usuario no tiene una organización asignada.');
           return;
         }
 
-        const orgData = await organizationService.getById(freshUser.organization_id);
+        const orgData = await organizationService.getById(profile.organization_id);
 
         if (!orgData || orgData.active === false || orgData.status !== 'active') {
-          console.warn('Organización inactiva o suspendida');
-          authService.clearSession();
           setUser(null);
           setOrganization(null);
           setError('La empresa u organización a la que perteneces se encuentra inactiva o suspendida.');
-          setLoading(false);
           return;
         }
 
@@ -90,34 +86,74 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setOrganization(null);
       }
 
-      setUser(freshUser);
+      setUser(profile);
+      setError(null);
     } catch (err: any) {
       console.error('Error al procesar la sesión de usuario:', err);
-      setError('Ocurrió un error al validar la sesión de usuario.');
+      setError(err.message || 'Ocurrió un error al validar la sesión de usuario.');
       setUser(null);
       setOrganization(null);
-      authService.clearSession();
-    } finally {
-      setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadUserSession();
+    let isMounted = true;
+
+    // Inicializar la sesión con Supabase Auth
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!isMounted) return;
+      setRawSession(session);
+      if (session?.user) {
+        processSessionUser(session.user).finally(() => {
+          if (isMounted) setLoading(false);
+        });
+      } else {
+        setUser(null);
+        setOrganization(null);
+        setLoading(false);
+      }
+    });
+
+    // Suscribirse a cambios en el estado de autenticación de Supabase
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!isMounted) return;
+      setRawSession(session);
+
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED' || event === 'INITIAL_SESSION') {
+        if (session?.user) {
+          await processSessionUser(session.user);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setOrganization(null);
+        setError(null);
+        setSubscriptionWarning(null);
+      }
+      setLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (identifier: string, pass: string) => {
     setError(null);
     setLoading(true);
     try {
-      const loggedUser = await authService.login(identifier, pass);
-      await loadUserSession();
+      await authService.login(identifier, pass);
+      // La llamada a signInWithPassword dentro de authService.login
+      // dispara el evento 'SIGNED_IN' en onAuthStateChange, el cual
+      // obtiene la sesión y carga el perfil de forma unificada.
     } catch (err: any) {
       setError(err.message || 'Error al iniciar sesión');
       setUser(null);
       setOrganization(null);
-      setLoading(false);
+      setRawSession(null);
       throw err;
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -130,6 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setUser(null);
       setOrganization(null);
+      setRawSession(null);
       setError(null);
       setSubscriptionWarning(null);
       setLoading(false);
@@ -143,7 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         organization,
-        session: user,
+        session: rawSession,
         loading,
         error,
         subscriptionWarning,

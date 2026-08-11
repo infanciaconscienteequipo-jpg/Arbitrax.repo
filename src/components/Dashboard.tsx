@@ -29,7 +29,7 @@ export default function Dashboard({
   const [selectedVendorFilter, setSelectedVendorFilter] = useState<string>('all');
 
   const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
-  const currentOrgId = currentUser?.organization_id || 'org-1';
+  const currentOrgId = currentUser?.organization_id || '';
 
   // Helper to determine if a record belongs to the currently active shift
   const isRecordInActiveShift = (

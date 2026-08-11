@@ -170,67 +170,126 @@ export const authService = {
   },
 
   /**
-   * Iniciar sesión directamente en PostgreSQL vía RPC rpc_login_user.
-   * La verificación de contraseña se realiza EN LA BASE DE DATOS. NUNCA se envía password_hash al cliente.
+   * Resolver username o email a un email registrado vía RPC rpc_resolve_login_email
+   */
+  async resolveEmail(identifier: string): Promise<string> {
+    const cleanId = identifier.trim();
+    if (!cleanId) {
+      throw new Error('Por favor, ingresa tu usuario/correo y contraseña.');
+    }
+
+    const { data: resolvedEmail, error } = await supabase.rpc('rpc_resolve_login_email', {
+      p_identifier: cleanId,
+    });
+
+    if (error) {
+      console.error('Error en rpc_resolve_login_email:', error.message);
+      throw new Error('No se pudo verificar la cuenta. Intenta nuevamente.');
+    }
+
+    if (!resolvedEmail) {
+      throw new Error('Usuario o correo electrónico no encontrado.');
+    }
+
+    return resolvedEmail;
+  },
+
+  /**
+   * Obtener perfil de public.users exclusivamente por auth_user_id
+   */
+  async getProfileByAuthUserId(authUserId: string): Promise<User | null> {
+    if (!authUserId) return null;
+
+    try {
+      // Buscar coincidencia exclusivamente por auth_user_id
+      const { data: userData, error } = await supabase
+        .from('users')
+        .select('id, username, name, email, role, organization_id, status, active, auth_user_id')
+        .eq('auth_user_id', authUserId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error al consultar usuario por auth_user_id:', error);
+        return null;
+      }
+
+      if (!userData) {
+        return null;
+      }
+
+      if (userData.active === false || userData.status === 'disabled' || userData.status === 'suspended') {
+        throw new Error('El usuario está desactivado o suspendido. Contacta al administrador.');
+      }
+
+      const rawRole = (userData.role || '').toUpperCase();
+      let normRole: UserRole = 'VENDEDOR';
+      if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
+      else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+
+      return {
+        id: userData.id,
+        username: userData.username || userData.email?.split('@')[0] || 'usuario',
+        name: userData.name || userData.username || 'Usuario',
+        email: userData.email || '',
+        role: normRole,
+        organization_id: normRole === 'SUPER_ADMIN' ? null : (userData.organization_id || null),
+        status: userData.status || 'active',
+        active: userData.active !== false && userData.status === 'active',
+        lastLogin: new Date().toISOString(),
+      };
+    } catch (err: any) {
+      if (err.message && err.message.includes('desactivado')) {
+        throw err;
+      }
+      console.error('Error al obtener perfil del usuario:', err);
+      return null;
+    }
+  },
+
+  /**
+   * Iniciar sesión utilizando Supabase Auth (signInWithPassword).
    */
   async login(identifier: string, pass: string): Promise<User> {
     if (!identifier || !pass) {
       throw new Error('Por favor, ingresa tu usuario/correo y contraseña.');
     }
 
-    const { data: rpcData, error: rpcError } = await supabase.rpc('rpc_login_user', {
-      p_identifier: identifier,
-      p_password: pass,
+    const cleanIdentifier = identifier.trim();
+
+    // 1. Resolver username o email a email de autenticación Supabase Auth
+    const resolvedEmail = await this.resolveEmail(cleanIdentifier);
+
+    // 2. Autenticar directamente contra Supabase Auth (SIN trim en la contraseña)
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: resolvedEmail,
+      password: pass,
     });
 
-    if (rpcError) {
-      const msg = rpcError.message || '';
-      if (msg.includes('USER_INACTIVE')) {
-        throw new Error('El usuario está desactivado o suspendido. Contacta al administrador.');
-      }
-      if (msg.includes('USER_NOT_FOUND') || msg.includes('INVALID_PASSWORD')) {
-        throw new Error('Usuario o contraseña incorrectos.');
-      }
-      if (msg.includes('IDENTIFIER_AND_PASSWORD_REQUIRED')) {
-        throw new Error('Por favor, ingresa tu usuario/correo y contraseña.');
-      }
-      console.error('Error en rpc_login_user:', msg);
+    if (authError || !authData?.user) {
+      console.error('Error en Supabase Auth signInWithPassword:', authError?.message);
       throw new Error('Usuario o contraseña incorrectos.');
     }
 
-    const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
-    if (!row) {
-      throw new Error('Usuario o contraseña incorrectos.');
+    // 3. Obtener el perfil correspondiente en public.users exclusivamente por auth_user_id
+    const userObj = await this.getProfileByAuthUserId(authData.user.id);
+    if (!userObj) {
+      throw new Error('La cuenta de autenticación no está vinculada a ArbitraX.');
     }
-
-    const rawRole = (row.role || '').toUpperCase();
-    let normalizedRole: UserRole = 'VENDEDOR';
-    if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
-    else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
-
-    const userObj: User = {
-      id: row.id,
-      username: row.username,
-      name: row.name,
-      email: row.email || '',
-      role: normalizedRole,
-      organization_id: normalizedRole === 'SUPER_ADMIN' ? null : (row.organization_id || null),
-      status: row.status || 'active',
-      active: true,
-      lastLogin: new Date().toISOString(),
-    };
-
-    // Guardar sesión limpia en localStorage (sin password ni password_hash)
-    this.setSession(userObj);
 
     return userObj;
   },
 
   /**
-   * Cerrar sesión del usuario
+   * Cerrar sesión del usuario en Supabase Auth
    */
   async logout(): Promise<void> {
-    this.clearSession();
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Error cerrando sesión en Supabase Auth:', err);
+    } finally {
+      this.clearSession();
+    }
   },
 
   /**
