@@ -101,12 +101,46 @@ export default function Fondos({
   const uniquePersons = Array.from(new Set(incomesList.map(r => r.transferPerson))).filter(Boolean);
 
   // Chronological order for First & Last
-  const getTime = (ts?: string) => {
-    if (!ts) return 0;
-    const t = new Date(ts).getTime();
-    return isNaN(t) ? 0 : t;
+  const getIncomeSortTime = (inc: { timestamp?: string; dateString?: string; timeString?: string }) => {
+    let datePart = '';
+    if (inc.dateString) {
+      const rawDate = inc.dateString.trim();
+      datePart = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
+    } else if (inc.timestamp) {
+      datePart = inc.timestamp.split('T')[0];
+    }
+
+    let timePart = '';
+    if (inc.timeString) {
+      const rawTime = inc.timeString.trim();
+      timePart = rawTime.includes('T') ? (rawTime.split('T')[1]?.substring(0, 8) || rawTime) : rawTime;
+    } else if (inc.timestamp && inc.timestamp.includes('T')) {
+      timePart = inc.timestamp.split('T')[1]?.substring(0, 8) || '';
+    }
+
+    if (timePart && timePart.length === 5) {
+      timePart = `${timePart}:00`;
+    }
+
+    if (datePart && timePart) {
+      const d = new Date(`${datePart}T${timePart}`);
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+
+    if (datePart) {
+      const d = new Date(`${datePart}T00:00:00`);
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+
+    if (inc.timestamp) {
+      const d = new Date(inc.timestamp);
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+
+    return 0;
   };
-  const sortedIncomes = [...incomesList].sort((a, b) => getTime(a.timestamp) - getTime(b.timestamp));
+
+  const sortedIncomes = [...incomesList].sort((a, b) => getIncomeSortTime(a) - getIncomeSortTime(b));
   const firstIncome = sortedIncomes.length > 0 ? sortedIncomes[0] : null;
   const lastIncome = sortedIncomes.length > 0 ? sortedIncomes[sortedIncomes.length - 1] : null;
 

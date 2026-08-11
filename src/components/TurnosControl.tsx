@@ -182,18 +182,41 @@ export default function TurnosControl({
 
     // Sort combinedIncomes chronologically by exact date and time
     const getIncomeSortTime = (inc: { timestamp?: string; dateString?: string; timeString?: string }) => {
-      if (inc.dateString && inc.timeString) {
-        const d = new Date(`${inc.dateString}T${inc.timeString}`);
+      let datePart = '';
+      if (inc.dateString) {
+        const rawDate = inc.dateString.trim();
+        datePart = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
+      } else if (inc.timestamp) {
+        datePart = inc.timestamp.split('T')[0];
+      }
+
+      let timePart = '';
+      if (inc.timeString) {
+        const rawTime = inc.timeString.trim();
+        timePart = rawTime.includes('T') ? (rawTime.split('T')[1]?.substring(0, 8) || rawTime) : rawTime;
+      } else if (inc.timestamp && inc.timestamp.includes('T')) {
+        timePart = inc.timestamp.split('T')[1]?.substring(0, 8) || '';
+      }
+
+      if (timePart && timePart.length === 5) {
+        timePart = `${timePart}:00`;
+      }
+
+      if (datePart && timePart) {
+        const d = new Date(`${datePart}T${timePart}`);
         if (!isNaN(d.getTime())) return d.getTime();
       }
+
+      if (datePart) {
+        const d = new Date(`${datePart}T00:00:00`);
+        if (!isNaN(d.getTime())) return d.getTime();
+      }
+
       if (inc.timestamp) {
         const d = new Date(inc.timestamp);
         if (!isNaN(d.getTime())) return d.getTime();
       }
-      if (inc.dateString) {
-        const d = new Date(`${inc.dateString}T00:00:00`);
-        if (!isNaN(d.getTime())) return d.getTime();
-      }
+
       return 0;
     };
 
@@ -676,7 +699,7 @@ export default function TurnosControl({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-binance-border/30">
-                      {modalDetails.combinedIncomes.map((inc, idx) => (
+                      {modalDetails.sortedIncomes.map((inc, idx) => (
                         <tr key={inc.id ? `inc-${inc.id}` : `inc-idx-${idx}`} className="hover:bg-binance-card/50">
                           <td className="px-3 py-2 text-white font-mono">
                             <span className="block font-bold text-white text-xs">{inc.dateString || safeFormatDate(inc.timestamp) || '—'}</span>
@@ -691,7 +714,7 @@ export default function TurnosControl({
                         </tr>
                       ))}
 
-                      {modalDetails.combinedIncomes.length === 0 && (
+                      {modalDetails.sortedIncomes.length === 0 && (
                         <tr key="empty-incomes-modal">
                           <td colSpan={5} className="text-center py-4 text-binance-gray italic">
                             No se registraron ingresos de fondos en esta jornada.
