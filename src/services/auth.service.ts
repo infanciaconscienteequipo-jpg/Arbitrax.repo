@@ -293,7 +293,7 @@ export const authService = {
   },
 
   /**
-   * Crear usuario (SUPER_ADMIN, ADMIN o VENDEDOR) directamente en public.users utilizando bcrypt.hashSync
+   * Crear usuario (SUPER_ADMIN, ADMIN o VENDEDOR) invocando la Supabase Edge Function 'create-user'
    */
   async createUser(params: {
     email: string;
@@ -309,66 +309,59 @@ export const authService = {
     else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
 
     const cleanEmail = params.email.trim().toLowerCase();
-    const cleanPassword = params.password ? params.password.trim() : 'Arbitrax.2006';
-    const cleanUsername = params.username.trim().toLowerCase();
+    const rawPassword = params.password ?? '';
+    if (!rawPassword) {
+      throw new Error('La contraseña es obligatoria.');
+    }
+    const cleanUsername = params.username.trim();
     const cleanName = params.name.trim();
 
-    if (!params.organization_id && normalizedRole !== 'SUPER_ADMIN') {
-      throw new Error('El usuario debe pertenecer a una organización válida.');
-    }
-
-    // Verificar si el username o email ya existen
-    const { data: existing } = await supabase
-      .from('users')
-      .select('id, username, email')
-      .or(`username.ilike.${cleanUsername},email.ilike.${cleanEmail}`);
-
-    if (existing && existing.length > 0) {
-      const match = existing[0];
-      if (match.username?.toLowerCase() === cleanUsername) {
-        throw new Error(`El nombre de usuario '${cleanUsername}' ya está registrado.`);
-      }
-      if (match.email?.toLowerCase() === cleanEmail) {
-        throw new Error(`El correo electrónico '${cleanEmail}' ya está registrado.`);
-      }
-    }
-
-    // Generar hash bcrypt de la contraseña (NUNCA texto plano)
-    const passwordHash = bcrypt.hashSync(cleanPassword, 10);
-    const newUserId = crypto.randomUUID();
-
-    const newUserPayload = {
-      id: newUserId,
-      username: cleanUsername,
-      name: cleanName,
-      email: cleanEmail,
-      password_hash: passwordHash,
-      role: normalizedRole,
-      organization_id: normalizedRole === 'SUPER_ADMIN' ? null : params.organization_id,
-      status: 'active',
-      active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    const { data, error } = await supabase
-      .from('users')
-      .insert(newUserPayload)
-      .select('id, username, name, email, role, organization_id, status, active')
-      .single();
+    const { data, error } = await supabase.functions.invoke('create-user', {
+      body: {
+        email: cleanEmail,
+        password: rawPassword,
+        name: cleanName,
+        username: cleanUsername,
+        role: normalizedRole,
+        organization_id: normalizedRole === 'SUPER_ADMIN' ? null : params.organization_id,
+      },
+    });
 
     if (error) {
-      console.error('Error al insertar usuario en public.users:', error.message);
-      throw new Error(`Error al crear usuario: ${error.message}`);
+      let errMsg = error.message;
+      try {
+        if (error.context && typeof error.context.json === 'function') {
+          const errBody = await error.context.json();
+          if (errBody && errBody.error) {
+            errMsg = errBody.error;
+          }
+        }
+      } catch {
+        // Ignorar error al parsear JSON del context
+      }
+      throw new Error(errMsg || 'Error al crear usuario.');
     }
 
+    if (data?.error) {
+      throw new Error(data.error);
+    }
+
+    if (!data?.success || !data?.user) {
+      throw new Error('No se recibió la respuesta esperada al crear el usuario.');
+    }
+
+    const createdRoleRaw = (data.user.role || 'VENDEDOR').toUpperCase();
+    let normRole: UserRole = 'VENDEDOR';
+    if (createdRoleRaw === 'SUPER_ADMIN') normRole = 'SUPER_ADMIN';
+    else if (createdRoleRaw === 'ADMIN') normRole = 'ADMIN';
+
     return {
-      id: data?.id || newUserId,
-      username: cleanUsername,
-      name: cleanName,
-      email: cleanEmail,
-      role: normalizedRole,
-      organization_id: normalizedRole === 'SUPER_ADMIN' ? null : params.organization_id,
+      id: data.user.id,
+      username: data.user.username,
+      name: data.user.name,
+      email: data.user.email,
+      role: normRole,
+      organization_id: data.user.organization_id || null,
       status: 'active',
       active: true,
     };
