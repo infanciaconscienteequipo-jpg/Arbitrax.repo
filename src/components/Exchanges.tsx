@@ -36,9 +36,16 @@ export default function Exchanges({
   ).map((name, i) => ({ id: name, name, username: name, role: 'VENDEDOR' } as User));
 
   // Filter exchanges by org and vendor
+  const isVendedor = currentUser?.role === 'VENDEDOR';
   const filteredExchanges = exchanges.filter(ex => {
     if (ex.organization_id && ex.organization_id !== currentOrgId) return false;
-    if (selectedVendorFilter !== 'all') {
+    if (isVendedor && currentUser) {
+      const uName = currentUser.name?.toLowerCase() || '';
+      const uUsername = currentUser.username?.toLowerCase() || '';
+      const matchId = ex.vendorId === currentUser.id;
+      const matchName = (ex.vendorName && uName && ex.vendorName.toLowerCase().includes(uName)) || (ex.vendorName && uUsername && ex.vendorName.toLowerCase().includes(uUsername));
+      if (!matchId && !matchName) return false;
+    } else if (selectedVendorFilter !== 'all') {
       const vLower = selectedVendorFilter.toLowerCase();
       const matchId = ex.vendorId === selectedVendorFilter;
       const matchName = ex.vendorName?.toLowerCase().includes(vLower);
@@ -133,7 +140,7 @@ export default function Exchanges({
         </div>
 
         {/* VENDOR FILTER */}
-        {vendorsList.length > 0 && (
+        {isAdmin && vendorsList.length > 0 && (
           <div className="flex items-center gap-3 pt-2 border-t border-binance-border/50">
             <span className="text-xs font-bold text-binance-gray flex items-center gap-1.5">
               <UserIcon className="w-4 h-4 text-binance-yellow" />

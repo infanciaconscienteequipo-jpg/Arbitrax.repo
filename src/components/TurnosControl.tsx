@@ -31,6 +31,7 @@ interface TurnosControlProps {
   incomeExpenses?: IncomeExpenseRecord[];
   transactions: Transaction[];
   users?: User[];
+  currentUser?: User | null;
   currentOperator: string;
   onStartShift: (operatorName: string) => void;
   onEndShift: (shiftId: string) => void;
@@ -44,10 +45,13 @@ export default function TurnosControl({
   incomeExpenses = [],
   transactions,
   users = [],
+  currentUser,
   currentOperator,
   onStartShift,
   onEndShift,
 }: TurnosControlProps) {
+  const isVendedor = currentUser?.role === 'VENDEDOR';
+  const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
   const [operatorInput, setOperatorInput] = useState(currentOperator || '');
   const [selectedShiftForDetails, setSelectedShiftForDetails] = useState<Shift | null>(null);
   const [vendorFilter, setVendorFilter] = useState('all');
@@ -61,8 +65,16 @@ export default function TurnosControl({
   ).filter(Boolean);
 
   const filteredShifts = shifts.filter(s => {
-    if (vendorFilter === 'all') return true;
-    return s.operatorName?.toLowerCase().includes(vendorFilter.toLowerCase());
+    if (isVendedor && currentUser) {
+      const uName = currentUser.name?.toLowerCase() || '';
+      const uUsername = currentUser.username?.toLowerCase() || '';
+      if (!s.operatorName?.toLowerCase().includes(uName) && !s.operatorName?.toLowerCase().includes(uUsername)) {
+        return false;
+      }
+    } else if (vendorFilter !== 'all') {
+      return s.operatorName?.toLowerCase().includes(vendorFilter.toLowerCase());
+    }
+    return true;
   });
 
   const safeDate = (val: any): Date | null => {
@@ -432,19 +444,21 @@ export default function TurnosControl({
             <FileText className="w-4 h-4 text-binance-yellow" />
             Historial de Jornadas e Informes Diarios
           </h3>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-binance-gray">Vendedor / Operador:</span>
-            <select
-              value={vendorFilter}
-              onChange={e => setVendorFilter(e.target.value)}
-              className="px-3 py-1.5 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs text-amber-400 font-bold outline-hidden focus:border-binance-yellow cursor-pointer"
-            >
-              <option value="all">👤 Todos los Vendedores</option>
-              {uniqueVendors.map(v => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>
-          </div>
+          {isAdmin && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-binance-gray">Vendedor / Operador:</span>
+              <select
+                value={vendorFilter}
+                onChange={e => setVendorFilter(e.target.value)}
+                className="px-3 py-1.5 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs text-amber-400 font-bold outline-hidden focus:border-binance-yellow cursor-pointer"
+              >
+                <option value="all">👤 Todos los Vendedores</option>
+                {uniqueVendors.map(v => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div className="overflow-x-auto">

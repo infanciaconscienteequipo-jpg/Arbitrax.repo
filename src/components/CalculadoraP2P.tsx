@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { P2PArbitrage, Wallet, Transaction } from '../types';
+import { P2PArbitrage, Wallet, Transaction, User } from '../types';
 import { 
   Calculator, 
   Save, 
@@ -23,6 +23,7 @@ import {
 interface CalculadoraP2PProps {
   p2pCalcs: P2PArbitrage[];
   wallets: Wallet[];
+  currentUser?: User | null;
   onAddP2PCalc: (calc: P2PArbitrage) => void;
   onAddTransaction: (tx: Omit<Transaction, 'id' | 'timestamp' | 'dateString' | 'timeString'>) => void;
   activeShiftId: string | null;
@@ -31,6 +32,7 @@ interface CalculadoraP2PProps {
 export default function CalculadoraP2P({
   p2pCalcs,
   wallets,
+  currentUser,
   onAddP2PCalc,
   onAddTransaction,
   activeShiftId,
@@ -164,7 +166,7 @@ export default function CalculadoraP2P({
       totalPesos: pesosUsed,
       walletId: realWalletId,
       walletName: selectedWallet.name,
-      operator: 'Calculadora P2P',
+      operator: currentUser?.name || currentUser?.username || 'Calculadora P2P',
       notes: notes.trim() || 'Fase 1: Compra de USDT simulada',
       shiftId: activeShiftId,
     });
@@ -206,7 +208,7 @@ export default function CalculadoraP2P({
       totalPesos: pesosUsed,
       walletId: realWalletId,
       walletName: selectedWallet.name,
-      operator: 'Calculadora P2P',
+      operator: currentUser?.name || currentUser?.username || 'Calculadora P2P',
       gain: profitPesos, // Profit generated on paper
       notes: notes.trim() || `Fase 2: Venta de USDT recuperando capital + ganancia en saldo USDT (${formatUsdt(profitUsdt)} USDT netos)`,
       shiftId: activeShiftId,

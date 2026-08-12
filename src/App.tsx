@@ -703,6 +703,7 @@ export default function App() {
                 wallets={state.wallets}
                 transactions={state.transactions}
                 users={state.users}
+                currentUser={currentUser as any}
                 activeShiftId={state.activeShiftId}
                 onFundWallet={handleFundWallet}
                 onAddWallet={handleAddWallet}
@@ -746,6 +747,7 @@ export default function App() {
               <CalculadoraP2P
                 p2pCalcs={state.p2pCalcs}
                 wallets={state.wallets}
+                currentUser={currentUser as any}
                 onAddP2PCalc={handleAddP2PCalc}
                 onAddTransaction={handleAddTransaction}
                 activeShiftId={state.activeShiftId}
@@ -772,6 +774,7 @@ export default function App() {
                 incomeExpenses={state.incomeExpenses}
                 transactions={state.transactions}
                 users={state.users}
+                currentUser={currentUser as any}
                 currentOperator={currentUser?.name || state.currentOperator}
                 onStartShift={handleStartShift}
                 onEndShift={handleEndShift}

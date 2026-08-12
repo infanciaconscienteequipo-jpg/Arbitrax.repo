@@ -350,17 +350,107 @@ ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.income_expenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.p2p_arbitrages ENABLE ROW LEVEL SECURITY;
 
--- Políticas Permisivas para Anon/Public Key de Frontend
-CREATE POLICY "Permitir select para anon" ON public.organizations FOR SELECT USING (true);
-CREATE POLICY "Permitir insert/update para anon" ON public.organizations FOR ALL USING (true);
+-- Helper function to get authenticated user role and org safely without infinite RLS recursion
+CREATE OR REPLACE FUNCTION public.get_auth_user_info()
+RETURNS TABLE (
+  u_id text,
+  u_role text,
+  u_org_id text,
+  u_name text,
+  u_username text
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT 
+    id::text, 
+    role, 
+    organization_id, 
+    name, 
+    username
+  FROM public.users
+  WHERE id::text = auth.uid()::text
+     OR email = auth.email()
+  LIMIT 1;
+$$;
 
-CREATE POLICY "Permitir todo en users" ON public.users FOR ALL USING (true);
-CREATE POLICY "Permitir todo en wallets" ON public.wallets FOR ALL USING (true);
-CREATE POLICY "Permitir todo en exchange_accounts" ON public.exchange_accounts FOR ALL USING (true);
-CREATE POLICY "Permitir todo en shifts" ON public.shifts FOR ALL USING (true);
-CREATE POLICY "Permitir todo en transactions" ON public.transactions FOR ALL USING (true);
-CREATE POLICY "Permitir todo en income_expenses" ON public.income_expenses FOR ALL USING (true);
-CREATE POLICY "Permitir todo en p2p_arbitrages" ON public.p2p_arbitrages FOR ALL USING (true);
+-- ORGANIZATIONS POLICIES
+DROP POLICY IF EXISTS "rls_organizations_policy" ON public.organizations;
+DROP POLICY IF EXISTS "Permitir select para anon" ON public.organizations;
+DROP POLICY IF EXISTS "Permitir insert/update para anon" ON public.organizations;
+CREATE POLICY "rls_organizations_policy" ON public.organizations FOR ALL USING (true);
+
+-- USERS POLICIES
+DROP POLICY IF EXISTS "rls_users_policy" ON public.users;
+DROP POLICY IF EXISTS "Permitir todo en users" ON public.users;
+CREATE POLICY "rls_users_policy" ON public.users FOR ALL USING (
+  (SELECT u_role FROM public.get_auth_user_info()) = 'SUPER_ADMIN'
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'ADMIN' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()))
+  OR id::text = auth.uid()::text
+  OR true -- Allow lookup for initial login verification
+);
+
+-- WALLETS POLICIES
+DROP POLICY IF EXISTS "rls_wallets_policy" ON public.wallets;
+DROP POLICY IF EXISTS "Permitir todo en wallets" ON public.wallets;
+CREATE POLICY "rls_wallets_policy" ON public.wallets FOR ALL USING (
+  (SELECT u_role FROM public.get_auth_user_info()) = 'SUPER_ADMIN'
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'ADMIN' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()))
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'VENDEDOR' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()) AND (vendor_id = auth.uid()::text OR vendor_id = (SELECT u_id FROM public.get_auth_user_info()) OR titular ILIKE '%' || (SELECT u_name FROM public.get_auth_user_info()) || '%' OR titular ILIKE '%' || (SELECT u_username FROM public.get_auth_user_info()) || '%'))
+  OR (auth.uid() IS NULL)
+);
+
+-- EXCHANGE ACCOUNTS POLICIES
+DROP POLICY IF EXISTS "rls_exchanges_policy" ON public.exchange_accounts;
+DROP POLICY IF EXISTS "Permitir todo en exchange_accounts" ON public.exchange_accounts;
+CREATE POLICY "rls_exchanges_policy" ON public.exchange_accounts FOR ALL USING (
+  (SELECT u_role FROM public.get_auth_user_info()) = 'SUPER_ADMIN'
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'ADMIN' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()))
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'VENDEDOR' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()) AND (vendor_id = auth.uid()::text OR vendor_id = (SELECT u_id FROM public.get_auth_user_info()) OR vendor_name ILIKE '%' || (SELECT u_name FROM public.get_auth_user_info()) || '%' OR vendor_name ILIKE '%' || (SELECT u_username FROM public.get_auth_user_info()) || '%'))
+  OR (auth.uid() IS NULL)
+);
+
+-- SHIFTS POLICIES
+DROP POLICY IF EXISTS "rls_shifts_policy" ON public.shifts;
+DROP POLICY IF EXISTS "Permitir todo en shifts" ON public.shifts;
+CREATE POLICY "rls_shifts_policy" ON public.shifts FOR ALL USING (
+  (SELECT u_role FROM public.get_auth_user_info()) = 'SUPER_ADMIN'
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'ADMIN' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()))
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'VENDEDOR' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()) AND (operator_name ILIKE '%' || (SELECT u_name FROM public.get_auth_user_info()) || '%' OR operator_name ILIKE '%' || (SELECT u_username FROM public.get_auth_user_info()) || '%'))
+  OR (auth.uid() IS NULL)
+);
+
+-- TRANSACTIONS POLICIES
+DROP POLICY IF EXISTS "rls_transactions_policy" ON public.transactions;
+DROP POLICY IF EXISTS "Permitir todo en transactions" ON public.transactions;
+CREATE POLICY "rls_transactions_policy" ON public.transactions FOR ALL USING (
+  (SELECT u_role FROM public.get_auth_user_info()) = 'SUPER_ADMIN'
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'ADMIN' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()))
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'VENDEDOR' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()) AND (operator ILIKE '%' || (SELECT u_name FROM public.get_auth_user_info()) || '%' OR operator ILIKE '%' || (SELECT u_username FROM public.get_auth_user_info()) || '%'))
+  OR (auth.uid() IS NULL)
+);
+
+-- INCOME EXPENSES POLICIES
+DROP POLICY IF EXISTS "rls_income_expenses_policy" ON public.income_expenses;
+DROP POLICY IF EXISTS "Permitir todo en income_expenses" ON public.income_expenses;
+CREATE POLICY "rls_income_expenses_policy" ON public.income_expenses FOR ALL USING (
+  (SELECT u_role FROM public.get_auth_user_info()) = 'SUPER_ADMIN'
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'ADMIN' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()))
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'VENDEDOR' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()) AND (vendor_id = auth.uid()::text OR vendor_id = (SELECT u_id FROM public.get_auth_user_info()) OR operator ILIKE '%' || (SELECT u_name FROM public.get_auth_user_info()) || '%' OR operator ILIKE '%' || (SELECT u_username FROM public.get_auth_user_info()) || '%'))
+  OR (auth.uid() IS NULL)
+);
+
+-- P2P ARBITRAGES POLICIES
+DROP POLICY IF EXISTS "rls_p2p_arbitrages_policy" ON public.p2p_arbitrages;
+DROP POLICY IF EXISTS "Permitir todo en p2p_arbitrages" ON public.p2p_arbitrages;
+CREATE POLICY "rls_p2p_arbitrages_policy" ON public.p2p_arbitrages FOR ALL USING (
+  (SELECT u_role FROM public.get_auth_user_info()) = 'SUPER_ADMIN'
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'ADMIN' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()))
+  OR ((SELECT u_role FROM public.get_auth_user_info()) = 'VENDEDOR' AND organization_id = (SELECT u_org_id FROM public.get_auth_user_info()))
+  OR (auth.uid() IS NULL)
+);
 
 -- =====================================================================
 -- 12. DATOS DE PRUEBA Y SEMILLA (SEED DATA INICIAL)

@@ -29,6 +29,8 @@ export default function Reportes({
   const [customEndTime, setCustomEndTime] = useState('');
 
   const currentOrgId = currentUser?.organization_id || '';
+  const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
+  const isVendedor = currentUser?.role === 'VENDEDOR';
 
   // Extract unique vendors for filter dropdown
   const uniqueVendors = Array.from(
@@ -76,7 +78,13 @@ export default function Reportes({
 
   // Filter transactions by org and timeframe
   const filteredTxs = transactions.filter(t => {
-    if (vendorFilter !== 'all' && t.operator.toLowerCase() !== vendorFilter.toLowerCase()) {
+    if (isVendedor && currentUser) {
+      const uName = currentUser.name?.toLowerCase() || '';
+      const uUsername = currentUser.username?.toLowerCase() || '';
+      if (!t.operator.toLowerCase().includes(uName) && !t.operator.toLowerCase().includes(uUsername)) {
+        return false;
+      }
+    } else if (vendorFilter !== 'all' && t.operator.toLowerCase() !== vendorFilter.toLowerCase()) {
       return false;
     }
 
@@ -132,7 +140,14 @@ export default function Reportes({
     if (r.organization_id && r.organization_id !== currentOrgId) return false;
     if (r.type !== 'ingreso') return false;
 
-    if (vendorFilter !== 'all') {
+    if (isVendedor && currentUser) {
+      const uName = currentUser.name?.toLowerCase() || '';
+      const uUsername = currentUser.username?.toLowerCase() || '';
+      const matchPerson = r.transferPerson?.toLowerCase().includes(uName) || r.transferPerson?.toLowerCase().includes(uUsername);
+      const matchWallet = r.walletOrExchangeName?.toLowerCase().includes(uName) || r.walletOrExchangeName?.toLowerCase().includes(uUsername);
+      const matchOperator = r.operator?.toLowerCase().includes(uName) || r.operator?.toLowerCase().includes(uUsername);
+      if (!matchPerson && !matchWallet && !matchOperator) return false;
+    } else if (vendorFilter !== 'all') {
       const vLower = vendorFilter.toLowerCase();
       const matchPerson = r.transferPerson?.toLowerCase().includes(vLower);
       const matchWallet = r.walletOrExchangeName?.toLowerCase().includes(vLower);
@@ -260,19 +275,21 @@ export default function Reportes({
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-bold text-binance-gray">Vendedor:</span>
-              <select
-                value={vendorFilter}
-                onChange={e => setVendorFilter(e.target.value)}
-                className="px-3 py-2 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs text-amber-400 font-bold outline-hidden focus:border-binance-yellow cursor-pointer"
-              >
-                <option value="all">👤 Todos los Vendedores</option>
-                {uniqueVendors.map(v => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
-              </select>
-            </div>
+            {isAdmin && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-binance-gray">Vendedor:</span>
+                <select
+                  value={vendorFilter}
+                  onChange={e => setVendorFilter(e.target.value)}
+                  className="px-3 py-2 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs text-amber-400 font-bold outline-hidden focus:border-binance-yellow cursor-pointer"
+                >
+                  <option value="all">👤 Todos los Vendedores</option>
+                  {uniqueVendors.map(v => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-bold text-binance-gray flex items-center gap-1">

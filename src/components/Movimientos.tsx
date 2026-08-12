@@ -49,6 +49,8 @@ export default function Movimientos({
   const [customEndTime, setCustomEndTime] = useState('');
 
   const currentOrgId = currentUser?.organization_id || '';
+  const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
+  const isVendedor = currentUser?.role === 'VENDEDOR';
 
   // Auto-calc unit price: Monto ARS / Cantidad Crypto
   const calculatedUnitPrice = (typeof totalPesosInput === 'number' && typeof cryptoQtyInput === 'number' && cryptoQtyInput > 0)
@@ -197,7 +199,15 @@ export default function Movimientos({
       if (typeFilter === 'egreso' && t.type !== 'egreso_fondos') return false;
     }
 
-    if (vendorFilter !== 'all' && t.operator.toLowerCase() !== vendorFilter.toLowerCase()) return false;
+    if (isVendedor && currentUser) {
+      const uName = currentUser.name?.toLowerCase() || '';
+      const uUsername = currentUser.username?.toLowerCase() || '';
+      if (!t.operator.toLowerCase().includes(uName) && !t.operator.toLowerCase().includes(uUsername)) {
+        return false;
+      }
+    } else if (vendorFilter !== 'all' && t.operator.toLowerCase() !== vendorFilter.toLowerCase()) {
+      return false;
+    }
     if (operatorSearch && !t.operator.toLowerCase().includes(operatorSearch.toLowerCase())) return false;
 
     if (generalSearch) {
@@ -485,16 +495,18 @@ export default function Movimientos({
             />
           </div>
 
-          <select
-            value={vendorFilter}
-            onChange={(e) => setVendorFilter(e.target.value)}
-            className="w-full px-3 py-2 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-amber-400 font-bold"
-          >
-            <option value="all">👤 Todos los Vendedores</option>
-            {uniqueVendors.map(v => (
-              <option key={v} value={v}>{v}</option>
-            ))}
-          </select>
+          {isAdmin && (
+            <select
+              value={vendorFilter}
+              onChange={(e) => setVendorFilter(e.target.value)}
+              className="w-full px-3 py-2 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-amber-400 font-bold"
+            >
+              <option value="all">👤 Todos los Vendedores</option>
+              {uniqueVendors.map(v => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          )}
 
           <select
             value={timeFilter}

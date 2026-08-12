@@ -11,6 +11,7 @@ interface BilleterasProps {
   wallets: Wallet[];
   transactions: Transaction[];
   users?: User[];
+  currentUser?: User | null;
   activeShiftId: string | null;
   onFundWallet: (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => void;
   onAddWallet: (name: string, titular: string, initialBalance: number) => void;
@@ -21,11 +22,14 @@ export default function Billeteras({
   wallets,
   transactions,
   users = [],
+  currentUser,
   activeShiftId,
   onFundWallet,
   onAddWallet,
   onUpdateWallet,
 }: BilleterasProps) {
+  const isVendedor = currentUser?.role === 'VENDEDOR';
+  const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
   const [selectedWalletId, setSelectedWalletId] = useState('');
   const [amountInput, setAmountInput] = useState<number | ''>('');
   const [operationType, setOperationType] = useState<'ingreso_fondos' | 'egreso_fondos'>('ingreso_fondos');
@@ -113,11 +117,21 @@ export default function Billeteras({
 
   // Filter wallets by vendor/titular if selected
   const filteredWallets = wallets.filter(w => {
-    if (vendorFilter === 'all') return true;
-    const vLower = vendorFilter.toLowerCase();
-    const matchesTitular = w.titular?.toLowerCase().includes(vLower);
-    const matchesName = w.name?.toLowerCase().includes(vLower);
-    return matchesTitular || matchesName;
+    if (isVendedor && currentUser) {
+      const uName = currentUser.name?.toLowerCase() || '';
+      const uUsername = currentUser.username?.toLowerCase() || '';
+      const matchVendorId = w.vendorId === currentUser.id;
+      const matchTitular = (w.titular && uName && w.titular.toLowerCase().includes(uName)) || (w.titular && uUsername && w.titular.toLowerCase().includes(uUsername));
+      const matchName = (w.name && uName && w.name.toLowerCase().includes(uName)) || (w.name && uUsername && w.name.toLowerCase().includes(uUsername));
+      if (!matchVendorId && !matchTitular && !matchName) return false;
+    } else if (vendorFilter !== 'all') {
+      const vLower = vendorFilter.toLowerCase();
+      const matchesTitular = w.titular?.toLowerCase().includes(vLower);
+      const matchesName = w.name?.toLowerCase().includes(vLower);
+      const matchesVendorId = w.vendorId === vendorFilter;
+      if (!matchesTitular && !matchesName && !matchesVendorId) return false;
+    }
+    return true;
   });
 
   // Filtered transactions for bottom history table
@@ -126,7 +140,13 @@ export default function Billeteras({
     const now = new Date();
 
     // 0. Vendor Filter
-    if (vendorFilter !== 'all') {
+    if (isVendedor && currentUser) {
+      const uName = currentUser.name?.toLowerCase() || '';
+      const uUsername = currentUser.username?.toLowerCase() || '';
+      if (!t.operator.toLowerCase().includes(uName) && !t.operator.toLowerCase().includes(uUsername)) {
+        return false;
+      }
+    } else if (vendorFilter !== 'all') {
       const vLower = vendorFilter.toLowerCase();
       if (!t.operator.toLowerCase().includes(vLower) && !t.walletName.toLowerCase().includes(vLower)) {
         return false;
@@ -354,19 +374,21 @@ export default function Billeteras({
             <WalletCards className="w-5 h-5 text-binance-yellow" />
             Billeteras y Liquidez
           </h2>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-binance-gray">Vendedor / Titular:</span>
-            <select
-              value={vendorFilter}
-              onChange={(e) => setVendorFilter(e.target.value)}
-              className="px-3 py-1.5 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-amber-400 font-bold"
-            >
-              <option value="all">👤 Todos los Vendedores</option>
-              {uniqueVendors.map(v => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>
-          </div>
+          {isAdmin && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-binance-gray">Vendedor / Titular:</span>
+              <select
+                value={vendorFilter}
+                onChange={(e) => setVendorFilter(e.target.value)}
+                className="px-3 py-1.5 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-amber-400 font-bold"
+              >
+                <option value="all">👤 Todos los Vendedores</option>
+                {uniqueVendors.map(v => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Global Wallet Portfolio Summary Card - Pesos Focus */}
