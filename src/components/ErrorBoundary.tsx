@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { Component, ReactNode, ErrorInfo } from 'react';
 
 interface Props {
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
 interface State {
@@ -9,8 +9,11 @@ interface State {
   message: string;
 }
 
-export default class ErrorBoundary extends React.Component<Props, State> {
-  state: State = { hasError: false, message: '' };
+export default class ErrorBoundary extends Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
 
   static getDerivedStateFromError(error: Error): State {
     return {
@@ -19,7 +22,7 @@ export default class ErrorBoundary extends React.Component<Props, State> {
     };
   }
 
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
+  componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('ARBITRAX UI ERROR:', error, info);
   }
 
@@ -33,7 +36,7 @@ export default class ErrorBoundary extends React.Component<Props, State> {
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="px-5 py-2.5 rounded-xl bg-binance-yellow text-binance-black font-extrabold text-xs"
+              className="px-5 py-2.5 rounded-xl bg-binance-yellow text-binance-black font-extrabold text-xs cursor-pointer"
             >
               RECARGAR
             </button>
@@ -44,3 +47,4 @@ export default class ErrorBoundary extends React.Component<Props, State> {
     return this.props.children;
   }
 }
+

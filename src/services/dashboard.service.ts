@@ -84,6 +84,7 @@ export const dashboardService = {
       let incExpQuery = supabase.from('income_expenses').select('*').order('timestamp', { ascending: false });
       let txsQuery = supabase.from('transactions').select('*').order('timestamp', { ascending: false });
       let p2pQuery = supabase.from('p2p_arbitrages').select('*').order('timestamp', { ascending: false });
+      let notifsQuery = supabase.from('notifications').select('*').order('created_at', { ascending: false });
 
       if (organizationId) {
         orgsQuery = orgsQuery.eq('id', organizationId);
@@ -94,6 +95,7 @@ export const dashboardService = {
         incExpQuery = incExpQuery.eq('organization_id', organizationId);
         txsQuery = txsQuery.eq('organization_id', organizationId);
         p2pQuery = p2pQuery.eq('organization_id', organizationId);
+        notifsQuery = notifsQuery.eq('organization_id', organizationId);
       }
 
       const [
@@ -105,6 +107,7 @@ export const dashboardService = {
         incExpRes,
         txsRes,
         p2pRes,
+        notifsRes,
       ] = await Promise.all([
         orgsQuery,
         usersQuery,
@@ -114,6 +117,7 @@ export const dashboardService = {
         incExpQuery,
         txsQuery,
         p2pQuery,
+        notifsQuery,
       ]);
 
       if (orgsRes.error) {
@@ -258,6 +262,23 @@ export const dashboardService = {
         organization_id: p.organization_id,
       }));
 
+      const notifications: any[] = (notifsRes?.data || []).map((n: any) => ({
+        id: String(n.id || `notif-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`),
+        title: n.title || '',
+        message: n.message || '',
+        type: n.type || 'info',
+        read: Boolean(n.read),
+        createdAt: n.created_at || n.createdAt || new Date().toISOString(),
+        organization_id: n.organization_id,
+        metadata: n.metadata || n.meta || n.data || undefined,
+        wallet_name: n.wallet_name || n.walletName,
+        wallet_id: n.wallet_id || n.walletId,
+        note: n.note || n.notes,
+        reason: n.reason || n.motivo,
+        motivo: n.motivo || n.reason,
+        block_reason: n.block_reason || n.blockReason,
+      }));
+
       return {
         organizations,
         users,
@@ -268,6 +289,7 @@ export const dashboardService = {
         incomeExpenses,
         transactions,
         p2pCalcs,
+        notifications,
       };
     } catch (err) {
       console.error('Error fetching state from Supabase:', err);

@@ -25,6 +25,9 @@ import { shiftService } from './services/shift.service';
 import { exchangeService } from './services/exchange.service';
 import { organizationService } from './services/organization.service';
 import { authService } from './services/auth.service';
+import { notificationService, mapNotificationFromDB, AppNotification } from './services/notification.service';
+import { playNotificationSound } from './utils/sound';
+import { supabase } from './lib/supabase';
 
 import {
   LayoutDashboard,
@@ -69,6 +72,71 @@ export default function App() {
 
   const [cryptoTransfers, setCryptoTransfers] = useState<CryptoAdminTransfer[]>([]);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+
+  const hasLoadedInitialNotifsRef = React.useRef(false);
+  const knownNotificationIdsRef = React.useRef<Set<string>>(new Set());
+
+  // Trigger sound ONLY when a genuinely new notification arrives
+  useEffect(() => {
+    const notifs = state.notifications;
+    if (!notifs) return;
+
+    if (!hasLoadedInitialNotifsRef.current) {
+      // First load / F5 reload: record existing IDs without playing sound
+      notifs.forEach(n => {
+        if (n && n.id) {
+          knownNotificationIdsRef.current.add(String(n.id));
+        }
+      });
+      hasLoadedInitialNotifsRef.current = true;
+      return;
+    }
+
+    // Subsequent updates: check for any new notification IDs
+    const newItems = notifs.filter(n => n && n.id && !knownNotificationIdsRef.current.has(String(n.id)));
+    if (newItems.length > 0) {
+      newItems.forEach(n => knownNotificationIdsRef.current.add(String(n.id)));
+      playNotificationSound();
+    }
+  }, [state.notifications]);
+
+  // Realtime subscription for Supabase notifications
+  useEffect(() => {
+    if (!authUser) return;
+    const orgId = authUser.organization_id;
+
+    const channel = supabase
+      .channel(`rt-notifs-${orgId || 'global'}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: orgId ? `organization_id=eq.${orgId}` : undefined,
+        },
+        (payload) => {
+          if (payload.new) {
+            const mapped = mapNotificationFromDB(payload.new);
+            if (mapped && mapped.id) {
+              if (hasLoadedInitialNotifsRef.current && !knownNotificationIdsRef.current.has(String(mapped.id))) {
+                knownNotificationIdsRef.current.add(String(mapped.id));
+                playNotificationSound();
+              }
+              setState(prev => ({
+                ...prev,
+                notifications: [mapped, ...(prev.notifications || []).filter(n => n.id !== mapped.id)],
+              }));
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [authUser]);
 
   const currentUser = authUser || state.currentUser;
   const isVendedor = currentUser?.role === 'VENDEDOR';
@@ -362,6 +430,22 @@ export default function App() {
       await refreshData();
     }
     return success;
+  };
+
+  const handleMarkNotificationAsRead = async (id: string) => {
+    await notificationService.markAsRead(id);
+    setState(prev => ({
+      ...prev,
+      notifications: (prev.notifications || []).map(n => (n.id === id ? { ...n, read: true } : n)),
+    }));
+  };
+
+  const handleMarkAllNotificationsAsRead = async () => {
+    await notificationService.markAllAsRead(authUser?.organization_id || undefined);
+    setState(prev => ({
+      ...prev,
+      notifications: (prev.notifications || []).map(n => ({ ...n, read: true })),
+    }));
   };
 
   // Crypto Transfer from Seller Exchange to Admin
@@ -699,12 +783,19 @@ export default function App() {
 
                 <button
                   onClick={() => setActiveTab('notificaciones')}
-                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  className={`flex items-center justify-between gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                     activeTab === 'notificaciones' ? 'bg-binance-card text-binance-yellow border-l-2 border-binance-yellow' : 'text-binance-gray hover:text-white'
                   }`}
                 >
-                  <Bell className="w-4 h-4 text-binance-yellow" />
-                  Notificaciones
+                  <div className="flex items-center gap-2.5">
+                    <Bell className="w-4 h-4 text-binance-yellow" />
+                    Notificaciones
+                  </div>
+                  {(state.notifications || []).filter(n => n.read === false).length > 0 && (
+                    <span className="bg-binance-yellow text-binance-dark text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
+                      {(state.notifications || []).filter(n => n.read === false).length}
+                    </span>
+                  )}
                 </button>
 
                 {!isVendedor && (
@@ -880,6 +971,9 @@ export default function App() {
                     wallets={state.wallets}
                     exchanges={state.exchanges}
                     transactions={state.transactions}
+                    notifications={state.notifications || []}
+                    onMarkAsRead={handleMarkNotificationAsRead}
+                    onMarkAllAsRead={handleMarkAllNotificationsAsRead}
                   />
                 )}
 

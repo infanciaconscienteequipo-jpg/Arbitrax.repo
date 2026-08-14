@@ -170,5 +170,6 @@ export interface AppState {
   users: User[];
   currentUser: User | null;
   cryptoAdminTransfers?: CryptoAdminTransfer[];
+  notifications?: any[];
 }
 
