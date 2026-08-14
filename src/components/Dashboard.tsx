@@ -82,14 +82,15 @@ export default function Dashboard({
   const activeShiftTransactions = transactions.filter(t => isRecordInActiveShift(t));
 
   const filteredTransactions = activeShiftTransactions.filter(t => {
-    if (!isAdmin && currentUser?.name) {
-      return t.operator.toLowerCase().includes(currentUser.name.toLowerCase()) || (currentUser.username && t.operator.toLowerCase().includes(currentUser.username.toLowerCase()));
+    if (!isAdmin && currentUser?.id) {
+      const matchVendorId = (t as any).vendor_id === currentUser.id || (t as any).vendorId === currentUser.id;
+      const ownsWallet = filteredWallets.some(w => w.id === t.walletId || w.name === t.walletName);
+      return matchVendorId || ownsWallet;
     }
     if (selectedVendorFilter !== 'all') {
-      const vObj = users.find(u => u.id === selectedVendorFilter);
-      if (vObj) {
-        return t.operator.toLowerCase().includes(vObj.name.toLowerCase()) || t.operator.toLowerCase().includes(vObj.username.toLowerCase());
-      }
+      const matchVendorId = (t as any).vendor_id === selectedVendorFilter || (t as any).vendorId === selectedVendorFilter;
+      const matchesWallet = wallets.some(w => (w.id === t.walletId || w.name === t.walletName) && w.vendorId === selectedVendorFilter);
+      return matchVendorId || matchesWallet;
     }
     return true;
   });

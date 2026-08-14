@@ -116,6 +116,25 @@ export default function App() {
     if (!authUser) return;
     if (authUser.role !== 'SUPER_ADMIN' && !authUser.organization_id) return;
 
+    if (authUser.role === 'CONTADORA') {
+      // CONTADORA: strictly fetch shifts, users and organizations (NO wallets, exchanges, transactions, incomeExpenses)
+      Promise.all([
+        shiftService.list(authUser.organization_id || undefined),
+        organizationService.list(),
+      ]).then(([shifts, orgs]) => {
+        setState(prev => ({
+          ...prev,
+          shifts,
+          organizations: orgs.length ? orgs : prev.organizations,
+          wallets: [],
+          exchanges: [],
+          transactions: [],
+          incomeExpenses: [],
+        }));
+      });
+      return;
+    }
+
     dashboardService.fetchAppState(authUser?.organization_id || undefined).then(remoteState => {
       if (remoteState && Object.keys(remoteState).length > 0) {
         setState(prev => ({

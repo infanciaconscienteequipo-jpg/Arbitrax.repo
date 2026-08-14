@@ -148,14 +148,17 @@ export default function Billeteras({
 
     // 0. Vendor Filter
     if (isVendedor && currentUser) {
-      const uName = currentUser.name?.toLowerCase() || '';
-      const uUsername = currentUser.username?.toLowerCase() || '';
-      if (!t.operator.toLowerCase().includes(uName) && !t.operator.toLowerCase().includes(uUsername)) {
+      const matchVendorId = (t as any).vendor_id === currentUser.id || (t as any).vendorId === currentUser.id;
+      const ownsWallet = wallets.some(w => (w.id === t.walletId || w.name === t.walletName) && w.vendorId === currentUser.id);
+      if (!matchVendorId && !ownsWallet) {
         return false;
       }
     } else if (vendorFilter !== 'all') {
       const vLower = vendorFilter.toLowerCase();
-      if (!t.operator.toLowerCase().includes(vLower) && !t.walletName.toLowerCase().includes(vLower)) {
+      const matchVendorId = (t as any).vendor_id === vendorFilter || (t as any).vendorId === vendorFilter;
+      const matchesWallet = wallets.some(w => (w.id === t.walletId || w.name === t.walletName) && (w.vendorId === vendorFilter || w.titular?.toLowerCase().includes(vLower)));
+      const matchesOperator = t.operator.toLowerCase().includes(vLower);
+      if (!matchVendorId && !matchesWallet && !matchesOperator) {
         return false;
       }
     }

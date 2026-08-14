@@ -17,20 +17,33 @@ export const exchangeService = {
 
   async create(exchange: ExchangeAccount): Promise<ExchangeAccount> {
     const dbRow = mapExchangeToDB(exchange);
-    const { error } = await supabase.from('exchange_accounts').upsert(dbRow);
+    if (!dbRow.id) {
+      delete dbRow.id;
+    }
+    const { data, error } = await supabase.from('exchange_accounts').insert(dbRow).select();
     if (error) {
       console.error('Error al crear exchange:', error.message);
       throw error;
+    }
+    if (data && data.length > 0) {
+      return mapExchangeFromDB(data[0]);
     }
     return exchange;
   },
 
   async update(exchange: ExchangeAccount): Promise<ExchangeAccount> {
     const dbRow = mapExchangeToDB(exchange);
-    const { error } = await supabase.from('exchange_accounts').upsert(dbRow);
+    const { data, error } = await supabase
+      .from('exchange_accounts')
+      .update(dbRow)
+      .eq('id', exchange.id)
+      .select();
     if (error) {
       console.error('Error al actualizar exchange:', error.message);
       throw error;
+    }
+    if (data && data.length > 0) {
+      return mapExchangeFromDB(data[0]);
     }
     return exchange;
   },

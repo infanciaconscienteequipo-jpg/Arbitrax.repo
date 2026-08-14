@@ -57,11 +57,18 @@ export default function Movimientos({
     ? totalPesosInput / cryptoQtyInput
     : 0;
 
+  const availableWallets = wallets.filter(w => !isVendedor || (w.vendorId && w.vendorId === currentUser?.id));
+  const availableExchanges = exchanges.filter(ex => !isVendedor || (ex.vendorId && ex.vendorId === currentUser?.id));
+
   // Auto-select defaults for form
   React.useEffect(() => {
-    if (wallets.length > 0 && !selectedWalletId) setSelectedWalletId(wallets[0].id);
-    if (exchanges.length > 0 && !selectedExchangeId) setSelectedExchangeId(exchanges[0].id);
-  }, [wallets, exchanges]);
+    if (availableWallets.length > 0 && (!selectedWalletId || !availableWallets.some(w => w.id === selectedWalletId))) {
+      setSelectedWalletId(availableWallets[0].id);
+    }
+    if (availableExchanges.length > 0 && (!selectedExchangeId || !availableExchanges.some(ex => ex.id === selectedExchangeId))) {
+      setSelectedExchangeId(availableExchanges[0].id);
+    }
+  }, [availableWallets, availableExchanges, selectedWalletId, selectedExchangeId]);
 
   const handleCreateTrade = (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,13 +209,17 @@ export default function Movimientos({
     }
 
     if (isVendedor && currentUser) {
-      const uName = currentUser.name?.toLowerCase() || '';
-      const uUsername = currentUser.username?.toLowerCase() || '';
-      if (!t.operator.toLowerCase().includes(uName) && !t.operator.toLowerCase().includes(uUsername)) {
+      const matchVendorId = (t as any).vendor_id === currentUser.id || (t as any).vendorId === currentUser.id;
+      const ownsWallet = wallets.some(w => (w.id === t.walletId || w.name === t.walletName) && w.vendorId === currentUser.id);
+      if (!matchVendorId && !ownsWallet) {
         return false;
       }
-    } else if (vendorFilter !== 'all' && t.operator.toLowerCase() !== vendorFilter.toLowerCase()) {
-      return false;
+    } else if (vendorFilter !== 'all') {
+      const matchVendorId = (t as any).vendor_id === vendorFilter || (t as any).vendorId === vendorFilter;
+      const matchOperator = t.operator.toLowerCase() === vendorFilter.toLowerCase();
+      if (!matchVendorId && !matchOperator) {
+        return false;
+      }
     }
     if (operatorSearch && !t.operator.toLowerCase().includes(operatorSearch.toLowerCase())) return false;
 
@@ -367,7 +378,7 @@ export default function Movimientos({
                     onChange={e => setSelectedWalletId(e.target.value)}
                     className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow font-bold cursor-pointer"
                   >
-                    {wallets.map(w => (
+                    {availableWallets.map(w => (
                       <option key={w.id} value={w.id} disabled={w.blocked}>
                         {w.name} {w.blocked ? '🔒 [BLOQUEADA]' : `($${w.saldoPesos.toLocaleString('es-AR')} ARS)`}
                       </option>
@@ -386,7 +397,7 @@ export default function Movimientos({
                     onChange={e => setSelectedExchangeId(e.target.value)}
                     className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow font-bold cursor-pointer"
                   >
-                    {exchanges.map(ex => (
+                    {availableExchanges.map(ex => (
                       <option key={ex.id} value={ex.id}>{ex.name} ({ex.balanceCrypto} USDT)</option>
                     ))}
                   </select>

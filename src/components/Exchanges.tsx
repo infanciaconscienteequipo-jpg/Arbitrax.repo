@@ -208,7 +208,7 @@ export default function Exchanges({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {myExchanges.length > 0 && onTransferCryptoToAdmin && (
+            {isVendedor && myExchanges.length > 0 && onTransferCryptoToAdmin && (
               <button
                 onClick={() => handleOpenTransfer()}
                 className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg cursor-pointer uppercase tracking-wider transition-all"
@@ -313,7 +313,7 @@ export default function Exchanges({
               </div>
 
               {/* ACTION: Enviar al administrador */}
-              {onTransferCryptoToAdmin && (
+              {isVendedor && onTransferCryptoToAdmin && ex.vendorId === currentUser?.id && (
                 <button
                   onClick={() => handleOpenTransfer(ex)}
                   className="w-full py-2 px-3 bg-binance-black hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"

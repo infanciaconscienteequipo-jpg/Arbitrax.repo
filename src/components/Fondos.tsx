@@ -44,6 +44,9 @@ export default function Fondos({
   const isContadora = currentUser?.role === 'CONTADORA';
   const currentOrgId = currentUser?.organization_id || '';
 
+  const availableWallets = wallets.filter(w => !isVendedor || (w.vendorId && w.vendorId === currentUser?.id));
+  const availableExchanges = exchanges.filter(ex => !isVendedor || (ex.vendorId && ex.vendorId === currentUser?.id));
+
   // Unique vendors list (only for admin or contadora)
   const uniqueVendors = isVendedor
     ? []
@@ -60,16 +63,16 @@ export default function Fondos({
     
     // Vendor isolation
     if (isVendedor && currentUser) {
-      const uName = currentUser.name?.toLowerCase() || '';
-      const uUsername = currentUser.username?.toLowerCase() || '';
-      const matchPerson = (r.transferPerson && uName && r.transferPerson.toLowerCase().includes(uName)) || (r.transferPerson && uUsername && r.transferPerson.toLowerCase().includes(uUsername));
-      const matchWallet = (r.walletOrExchangeName && uName && r.walletOrExchangeName.toLowerCase().includes(uName)) || (r.walletOrExchangeName && uUsername && r.walletOrExchangeName.toLowerCase().includes(uUsername));
-      if (!matchPerson && !matchWallet && r.transferPerson) return false;
+      const matchVendorId = r.vendorId === currentUser.id;
+      const ownsWalletOrEx = wallets.some(w => w.id === r.walletOrExchangeId && w.vendorId === currentUser.id) ||
+        exchanges.some(ex => ex.id === r.walletOrExchangeId && ex.vendorId === currentUser.id);
+      if (!matchVendorId && !ownsWalletOrEx) return false;
     } else if (vendorFilter !== 'all') {
       const vLower = vendorFilter.toLowerCase();
+      const matchVendorId = r.vendorId === vendorFilter;
       const matchPerson = r.transferPerson?.toLowerCase().includes(vLower);
       const matchWallet = r.walletOrExchangeName?.toLowerCase().includes(vLower);
-      if (!matchPerson && !matchWallet) return false;
+      if (!matchVendorId && !matchPerson && !matchWallet) return false;
     }
     
     // Time filter
@@ -421,8 +424,8 @@ export default function Fondos({
                 >
                   <option value="">-- Seleccionar --</option>
                   {assetType === 'pesos'
-                    ? wallets.map(w => <option key={w.id} value={w.id}>{w.name} (${w.saldoPesos.toLocaleString()} ARS)</option>)
-                    : exchanges.map(ex => <option key={ex.id} value={ex.id}>{ex.name} ({ex.balanceCrypto} USDT)</option>)
+                    ? availableWallets.map(w => <option key={w.id} value={w.id}>{w.name} (${w.saldoPesos.toLocaleString()} ARS)</option>)
+                    : availableExchanges.map(ex => <option key={ex.id} value={ex.id}>{ex.name} ({ex.balanceCrypto} USDT)</option>)
                   }
                 </select>
               </div>
