@@ -209,45 +209,48 @@ export default function App() {
       timeString: timeStr,
       shiftId: txData.shiftId || state.activeShiftId || undefined,
       organization_id: txData.organization_id || authOrg?.id || '',
+      sellerId: txData.sellerId || (currentUser?.role === 'VENDEDOR' ? currentUser.id : undefined),
     };
 
-    try {
-      if (txData.type === 'compra') {
-        await transactionService.buy({
-          crypto: txData.crypto,
-          quantity: txData.quantity,
-          unitPrice: txData.unitPrice,
-          totalPesos: txData.totalPesos,
-          walletId: txData.walletId,
-          walletName: txData.walletName,
-          operator: txData.operator,
-          supplier: txData.supplier,
-          notes: txData.notes,
-          shiftId: txData.shiftId || state.activeShiftId || undefined,
-          organization_id: txData.organization_id || authOrg?.id || '',
-        });
-      } else if (txData.type === 'venta') {
-        await transactionService.sell({
-          crypto: txData.crypto,
-          quantity: txData.quantity,
-          unitPrice: txData.unitPrice,
-          totalPesos: txData.totalPesos,
-          walletId: txData.walletId,
-          walletName: txData.walletName,
-          operator: txData.operator,
-          client: txData.client,
-          gain: txData.gain,
-          notes: txData.notes,
-          shiftId: txData.shiftId || state.activeShiftId || undefined,
-          organization_id: txData.organization_id || authOrg?.id || '',
-        });
-      } else {
-        await transactionService.sync(newTx);
-      }
-    } catch (err) {
-      console.error('Error al procesar transaccion:', err);
+    if (txData.type === 'compra') {
+      await transactionService.buy({
+        crypto: txData.crypto,
+        quantity: txData.quantity,
+        unitPrice: txData.unitPrice,
+        totalPesos: txData.totalPesos,
+        walletId: txData.walletId,
+        walletName: txData.walletName,
+        operator: txData.operator,
+        supplier: txData.supplier,
+        notes: txData.notes,
+        shiftId: txData.shiftId || state.activeShiftId || undefined,
+        organization_id: txData.organization_id || authOrg?.id || '',
+        exchangeId: txData.exchangeId,
+        exchangeName: txData.exchangeName,
+        sellerId: txData.sellerId || (currentUser?.role === 'VENDEDOR' ? currentUser.id : undefined),
+      });
+    } else if (txData.type === 'venta') {
+      await transactionService.sell({
+        crypto: txData.crypto,
+        quantity: txData.quantity,
+        unitPrice: txData.unitPrice,
+        totalPesos: txData.totalPesos,
+        walletId: txData.walletId,
+        walletName: txData.walletName,
+        operator: txData.operator,
+        client: txData.client,
+        gain: txData.gain,
+        notes: txData.notes,
+        shiftId: txData.shiftId || state.activeShiftId || undefined,
+        organization_id: txData.organization_id || authOrg?.id || '',
+        exchangeId: txData.exchangeId,
+        exchangeName: txData.exchangeName,
+        sellerId: txData.sellerId || (currentUser?.role === 'VENDEDOR' ? currentUser.id : undefined),
+      });
+    } else {
       await transactionService.sync(newTx);
     }
+
     await refreshData();
   };
 
@@ -278,11 +281,7 @@ export default function App() {
       shiftId: recordData.shiftId || state.activeShiftId || undefined,
       organization_id: recordData.organization_id || authOrg?.id || '',
     };
-    try {
-      await dashboardService.syncIncomeExpense(record);
-    } catch (err) {
-      console.error('Error al registrar fondo:', err);
-    }
+    await dashboardService.syncIncomeExpense(record);
     await refreshData();
   };
 

@@ -9,7 +9,7 @@ interface MovimientosProps {
   users?: User[];
   currentUser?: User | null;
   onClearTransactions?: () => void;
-  onAddTransaction?: (tx: Omit<Transaction, 'id'>) => void;
+  onAddTransaction?: (tx: Omit<Transaction, 'id'>) => void | Promise<void>;
 }
 
 export default function Movimientos({
@@ -32,6 +32,7 @@ export default function Movimientos({
   const [clientOrSupplier, setClientOrSupplier] = useState('');
   const [tradeNotes, setTradeNotes] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
+  const [formError, setFormError] = useState('');
 
   // Filters State
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
@@ -70,9 +71,11 @@ export default function Movimientos({
     }
   }, [availableWallets, availableExchanges, selectedWalletId, selectedExchangeId]);
 
-  const handleCreateTrade = (e: React.FormEvent) => {
+  const handleCreateTrade = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!onAddTransaction) return;
+    setFormError('');
+    setFormSuccess('');
 
     if (typeof totalPesosInput !== 'number' || totalPesosInput <= 0) return;
     if (typeof cryptoQtyInput !== 'number' || cryptoQtyInput <= 0) return;
@@ -97,25 +100,34 @@ export default function Movimientos({
       gain = (calculatedUnitPrice - estimatedAvgBuyPrice) * cryptoQtyInput;
     }
 
-    onAddTransaction({
-      type: tradeType,
-      timestamp: isoStr,
-      dateString: dateStr,
-      timeString: timeStr,
-      crypto: cryptoTicker,
-      quantity: cryptoQtyInput,
-      unitPrice: calculatedUnitPrice,
-      totalPesos: totalPesosInput,
-      walletId: selectedWalletId,
-      walletName: walletObj ? walletObj.name : 'Billetera',
-      operator: currentUser?.name || currentUser?.username || 'Operador',
-      client: tradeType === 'venta' ? clientOrSupplier : undefined,
-      supplier: tradeType === 'compra' ? clientOrSupplier : undefined,
-      gain: tradeType === 'venta' ? gain : undefined,
-      notes: `${tradeNotes} (Exchange: ${exchangeObj ? exchangeObj.name : 'P2P'})`,
-    });
+    try {
+      await onAddTransaction({
+        type: tradeType,
+        timestamp: isoStr,
+        dateString: dateStr,
+        timeString: timeStr,
+        crypto: cryptoTicker,
+        quantity: cryptoQtyInput,
+        unitPrice: calculatedUnitPrice,
+        totalPesos: totalPesosInput,
+        walletId: selectedWalletId,
+        walletName: walletObj ? walletObj.name : 'Billetera',
+        operator: currentUser?.name || currentUser?.username || 'Operador',
+        client: tradeType === 'venta' ? clientOrSupplier : undefined,
+        supplier: tradeType === 'compra' ? clientOrSupplier : undefined,
+        gain: tradeType === 'venta' ? gain : undefined,
+        notes: `${tradeNotes} | Exchange: ${exchangeObj ? exchangeObj.name : 'P2P'}`.trim(),
+        exchangeId: selectedExchangeId || undefined,
+        exchangeName: exchangeObj?.name || undefined,
+        sellerId: isVendedor ? currentUser?.id : undefined,
+      });
 
-    setFormSuccess(`✅ Operación de ${tradeType.toUpperCase()} registrada exitosamente.`);
+      setFormSuccess(`✅ Operación de ${tradeType.toUpperCase()} registrada exitosamente.`);
+    } catch (err: any) {
+      console.error('Error al registrar operación:', err);
+      setFormError(err?.message || 'No se pudo registrar la operación.');
+      return;
+    }
     setTotalPesosInput('');
     setCryptoQtyInput('');
     setClientOrSupplier('');
@@ -125,14 +137,20 @@ export default function Movimientos({
   };
 
   // Extract unique vendors for filter dropdown (only for non-sellers)
-  const uniqueVendors = isVendedor
+  const activeVendorUsers = isVendedor
     ? []
-    : Array.from(
-        new Set([
-          ...users.map(u => u.name || u.username),
-          ...transactions.map(t => t.operator),
-        ].filter(Boolean))
+    : users.filter(u =>
+        u.active !== false &&
+        u.status === 'active' &&
+        (u.role || '').toUpperCase() === 'VENDEDOR' &&
+        u.organization_id === currentOrgId
       );
+
+  const uniqueVendors = activeVendorUsers.map(u => ({
+    id: u.id || '',
+    name: u.name || u.username,
+    username: u.username,
+  }));
 
   // Extract unique cryptos for filter
   const uniqueCryptos = Array.from(new Set(transactions.map(t => t.crypto.toUpperCase()))).filter(Boolean);
@@ -215,11 +233,12 @@ export default function Movimientos({
         return false;
       }
     } else if (vendorFilter !== 'all') {
-      const matchVendorId = (t as any).vendor_id === vendorFilter || (t as any).vendorId === vendorFilter;
-      const matchOperator = t.operator.toLowerCase() === vendorFilter.toLowerCase();
-      if (!matchVendorId && !matchOperator) {
-        return false;
-      }
+      const vendor = activeVendorUsers.find(u => (u.id || '') === vendorFilter);
+      if (!vendor) return false;
+      const matchVendorId = t.sellerId === vendor.id || (t as any).vendor_id === vendor.id || (t as any).vendorId === vendor.id;
+      const matchOperator = (t.operator || '').toLowerCase() === (vendor.name || '').toLowerCase()
+        || (t.operator || '').toLowerCase() === (vendor.username || '').toLowerCase();
+      if (!matchVendorId && !matchOperator) return false;
     }
     if (operatorSearch && !t.operator.toLowerCase().includes(operatorSearch.toLowerCase())) return false;
 
@@ -336,7 +355,13 @@ export default function Movimientos({
               </span>
             </div>
 
-            {formSuccess && (
+            {formError && (
+            <div className="mb-3 p-3 bg-binance-red/10 border border-binance-red/30 rounded-xl text-binance-red text-xs font-bold">
+              {formError}
+            </div>
+          )}
+
+          {formSuccess && (
               <div className="p-3 bg-binance-green/20 border border-binance-green/40 text-binance-green rounded-xl text-xs font-bold flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4" /> {formSuccess}
               </div>
@@ -516,7 +541,7 @@ export default function Movimientos({
             >
               <option value="all">👤 Todos los Vendedores</option>
               {uniqueVendors.map(v => (
-                <option key={v} value={v}>{v}</option>
+                <option key={v.id} value={v.id}>{v.name} (@{v.username})</option>
               ))}
             </select>
           )}

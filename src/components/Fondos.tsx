@@ -30,7 +30,7 @@ interface FondosProps {
   currentUser: User | null;
   users?: User[];
   activeShiftId?: string | null;
-  onAddIncomeExpense: (record: Omit<IncomeExpenseRecord, 'id'>) => void;
+  onAddIncomeExpense: (record: Omit<IncomeExpenseRecord, 'id'>) => void | Promise<void>;
 }
 
 export default function Fondos({
@@ -227,10 +227,11 @@ export default function Fondos({
     const dateStr = customDate || now.toISOString().split('T')[0];
     const timeStr = now.toTimeString().split(' ')[0];
 
-    onAddIncomeExpense({
-      type,
-      assetType,
-      walletOrExchangeId: targetId,
+    try {
+      await onAddIncomeExpense({
+        type,
+        assetType,
+        walletOrExchangeId: targetId,
       walletOrExchangeName: targetName,
       timestamp: isoStr,
       dateString: dateStr,
@@ -243,7 +244,11 @@ export default function Fondos({
       vendorId: currentUser?.id,
       organization_id: currentOrgId,
       shiftId: activeShiftId || undefined,
-    });
+      });
+    } catch (err: any) {
+      setFormError(err?.message || 'No se pudo registrar el movimiento.');
+      return;
+    }
 
     setAmount(0);
     setTransferPerson('');

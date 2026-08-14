@@ -92,6 +92,9 @@ export interface Transaction {
   notes?: string;
   shiftId?: string;   // Reference to the active shift
   organization_id?: string;
+  sellerId?: string;
+  exchangeId?: string;
+  exchangeName?: string;
 }
 
 export interface P2PArbitrage {

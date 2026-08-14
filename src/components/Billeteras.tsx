@@ -259,9 +259,9 @@ export default function Billeteras({
     if (!blockingWallet || !blockReason.trim()) return;
     setIsSubmittingBlock(true);
     try {
-      if (onBlockWallet) {
-        await onBlockWallet(blockingWallet.id, blockReason.trim());
-      }
+      if (!onBlockWallet) throw new Error('La función de bloqueo no está disponible.');
+      const ok = await onBlockWallet(blockingWallet.id, blockReason.trim());
+      if (ok !== true) throw new Error('La billetera no pudo ser bloqueada.');
       setSuccessMsg(`🔒 Billetera "${blockingWallet.name}" bloqueada exitosamente.`);
       setBlockingWallet(null);
       setBlockReason('');
@@ -276,9 +276,9 @@ export default function Billeteras({
   const handleConfirmUnblock = async (w: Wallet) => {
     setIsSubmittingUnblock(true);
     try {
-      if (onUnblockWallet) {
-        await onUnblockWallet(w.id);
-      }
+      if (!onUnblockWallet) throw new Error('La función de desbloqueo no está disponible.');
+      const ok = await onUnblockWallet(w.id);
+      if (ok !== true) throw new Error('La billetera no pudo ser desbloqueada.');
       setSuccessMsg(`🔓 Billetera "${w.name}" desbloqueada exitosamente.`);
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (err: any) {

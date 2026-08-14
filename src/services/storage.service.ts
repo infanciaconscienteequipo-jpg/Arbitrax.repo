@@ -22,7 +22,7 @@ export const storageService = {
     const filePath = `${folder}/${uniqueFileName}`;
 
     // Intentar buckets comunes: 'receipts', 'comprobantes', 'attachments'
-    const candidateBuckets = ['receipts', 'comprobantes', 'attachments'];
+    const candidateBuckets = ['comprobantes', 'receipts', 'attachments'];
     let lastError: any = null;
 
     for (const bucket of candidateBuckets) {

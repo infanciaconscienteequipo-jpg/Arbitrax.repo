@@ -234,6 +234,11 @@ export const dashboardService = {
         notes: row.notes || '',
         shiftId: row.shift_id || row.shiftId || undefined,
         organization_id: row.organization_id,
+        sellerId: row.seller_id || row.sellerId || undefined,
+        exchangeId: row.exchange_id || row.exchangeId || undefined,
+        exchangeName: row.exchange_name || row.exchangeName || (
+          row.notes?.split('|').find((p: string) => p.includes('Exchange:'))?.split('Exchange:')[1]?.trim() || ''
+        ),
       }));
 
       const p2pCalcs: P2PArbitrage[] = (p2pRes.data || []).map((p: any) => ({
@@ -352,6 +357,10 @@ export const dashboardService = {
       shift_id: record.shiftId || null,
       updated_at: new Date().toISOString(),
     };
-    await supabase.from('income_expenses').upsert(dbRecord);
+    const { error } = await supabase.from('income_expenses').upsert(dbRecord);
+    if (error) {
+      console.error('Error al guardar ingreso/egreso:', error.message);
+      throw new Error(error.message || 'No se pudo guardar el movimiento de fondos.');
+    }
   },
 };

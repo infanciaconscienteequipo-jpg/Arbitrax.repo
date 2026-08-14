@@ -40,6 +40,9 @@ export const transactionService = {
     notes?: string;
     shiftId?: string;
     organization_id: string;
+    exchangeId?: string;
+    exchangeName?: string;
+    sellerId?: string;
   }): Promise<Transaction> {
     try {
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_buy', {
@@ -54,35 +57,20 @@ export const transactionService = {
         p_notes: params.notes || null,
         p_shift_id: params.shiftId || null,
         p_organization_id: params.organization_id,
+        p_exchange_id: params.exchangeId || null,
       });
-      if (!rpcErr && rpcRes) {
-        return typeof rpcRes === 'object' ? mapTransactionFromDB(rpcRes) : null as any;
+      if (rpcErr) {
+        throw new Error(rpcErr.message || 'No se pudo registrar la compra.');
       }
-    } catch (err) {
-      console.warn('RPC rpc_buy no disponible, insertando directamente.');
+      if (!rpcRes) {
+        throw new Error('Supabase no devolvió la compra registrada.');
+      }
+      return typeof rpcRes === 'object' ? mapTransactionFromDB(rpcRes) : null as any;
+    } catch (err: any) {
+      console.error('Error en rpc_buy:', err);
+      throw err instanceof Error ? err : new Error(err?.message || 'No se pudo registrar la compra.');
     }
 
-    const now = new Date();
-    const newTx: Transaction = {
-      id: `tx-${Date.now()}`,
-      type: 'compra',
-      timestamp: now.toISOString(),
-      dateString: now.toISOString().split('T')[0],
-      timeString: now.toTimeString().split(' ')[0],
-      crypto: params.crypto,
-      quantity: params.quantity,
-      unitPrice: params.unitPrice,
-      totalPesos: params.totalPesos,
-      walletId: params.walletId,
-      walletName: params.walletName,
-      operator: params.operator,
-      supplier: params.supplier,
-      notes: params.notes,
-      shiftId: params.shiftId,
-      organization_id: params.organization_id,
-    };
-
-    return this.create(newTx);
   },
 
   async sell(params: {
@@ -98,6 +86,9 @@ export const transactionService = {
     notes?: string;
     shiftId?: string;
     organization_id: string;
+    exchangeId?: string;
+    exchangeName?: string;
+    sellerId?: string;
   }): Promise<Transaction> {
     try {
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_sell', {
@@ -113,36 +104,20 @@ export const transactionService = {
         p_notes: params.notes || null,
         p_shift_id: params.shiftId || null,
         p_organization_id: params.organization_id,
+        p_exchange_id: params.exchangeId || null,
       });
-      if (!rpcErr && rpcRes) {
-        return typeof rpcRes === 'object' ? mapTransactionFromDB(rpcRes) : null as any;
+      if (rpcErr) {
+        throw new Error(rpcErr.message || 'No se pudo registrar la venta.');
       }
-    } catch (err) {
-      console.warn('RPC rpc_sell no disponible, insertando directamente.');
+      if (!rpcRes) {
+        throw new Error('Supabase no devolvió la venta registrada.');
+      }
+      return typeof rpcRes === 'object' ? mapTransactionFromDB(rpcRes) : null as any;
+    } catch (err: any) {
+      console.error('Error en rpc_sell:', err);
+      throw err instanceof Error ? err : new Error(err?.message || 'No se pudo registrar la venta.');
     }
 
-    const now = new Date();
-    const newTx: Transaction = {
-      id: `tx-${Date.now()}`,
-      type: 'venta',
-      timestamp: now.toISOString(),
-      dateString: now.toISOString().split('T')[0],
-      timeString: now.toTimeString().split(' ')[0],
-      crypto: params.crypto,
-      quantity: params.quantity,
-      unitPrice: params.unitPrice,
-      totalPesos: params.totalPesos,
-      walletId: params.walletId,
-      walletName: params.walletName,
-      operator: params.operator,
-      client: params.client,
-      gain: params.gain,
-      notes: params.notes,
-      shiftId: params.shiftId,
-      organization_id: params.organization_id,
-    };
-
-    return this.create(newTx);
   },
 
   async create(tx: Transaction): Promise<Transaction> {
@@ -181,6 +156,11 @@ function mapTransactionFromDB(row: any): Transaction {
     notes: row.notes || '',
     shiftId: row.shift_id || row.shiftId || undefined,
     organization_id: row.organization_id,
+    sellerId: row.seller_id || row.sellerId || undefined,
+    exchangeId: row.exchange_id || row.exchangeId || undefined,
+    exchangeName: row.exchange_name || row.exchangeName || (
+      row.notes?.split('|').find((p: string) => p.includes('Exchange:'))?.split('Exchange:')[1]?.trim() || ''
+    ),
   };
 }
 
@@ -205,6 +185,7 @@ function mapTransactionToDB(t: Transaction) {
     notes: t.notes || '',
     shift_id: t.shiftId || null,
     organization_id: t.organization_id || null,
+    seller_id: t.sellerId || null,
     updated_at: new Date().toISOString(),
   };
 }

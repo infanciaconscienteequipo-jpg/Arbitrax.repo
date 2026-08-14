@@ -81,6 +81,8 @@ function mapExchangeToDB(e: ExchangeAccount) {
     vendor_id: e.vendorId || null,
     vendor_name: e.vendorName || null,
     organization_id: e.organization_id || null,
+    status: 'ACTIVE',
+    archived: false,
     updated_at: new Date().toISOString(),
   };
 }

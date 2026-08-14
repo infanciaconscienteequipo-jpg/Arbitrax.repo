@@ -116,13 +116,16 @@ export const walletService = {
         p_notes: params.notes || '',
       });
 
-      if (!error) {
-        return {
-          success: true,
-          remaining_balance: data?.remaining_balance,
-        };
+      if (error) {
+        return { success: false, error: error.message };
       }
-      return { success: false, error: error.message };
+      if (!data || data.success !== true) {
+        return { success: false, error: 'Supabase no confirmó la transferencia.' };
+      }
+      return {
+        success: true,
+        remaining_balance: Number(data.remaining_balance ?? 0),
+      };
     } catch (err: any) {
       console.error('Error in rpc_transfer_crypto_to_admin:', err);
       return { success: false, error: err?.message || 'Error al procesar transferencia' };

@@ -19,7 +19,7 @@ export default function Reportes({
   activeShiftId,
   activeShift,
 }: ReportesProps) {
-  const [timeframe, setTimeframe] = useState<'shift' | 'all' | 'today' | 'month' | 'year' | 'custom'>('shift');
+  const [timeframe, setTimeframe] = useState<'shift' | 'all' | 'today' | 'month' | 'year' | 'custom'>('today');
   const [vendorFilter, setVendorFilter] = useState<string>('all');
 
   // Custom date and time range states
@@ -32,14 +32,13 @@ export default function Reportes({
   const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
   const isVendedor = currentUser?.role === 'VENDEDOR';
 
-  // Extract unique vendors for filter dropdown
-  const uniqueVendors = Array.from(
-    new Set([
-      ...users.map(u => u.name || u.username),
-      ...transactions.map(t => t.operator),
-      ...incomeExpenses.map(r => r.transferPerson),
-    ])
-  ).filter(Boolean);
+  // Solo vendedores activos y existentes de la organización actual.
+  const activeVendorUsers = users.filter(u =>
+    u.active !== false &&
+    u.status === 'active' &&
+    (u.role || '').toUpperCase() === 'VENDEDOR' &&
+    u.organization_id === currentOrgId
+  );
 
   // Helper to test if a record belongs to the active shift
   const isRecordInActiveShift = (
@@ -84,8 +83,15 @@ export default function Reportes({
       if (!t.operator.toLowerCase().includes(uName) && !t.operator.toLowerCase().includes(uUsername)) {
         return false;
       }
-    } else if (vendorFilter !== 'all' && t.operator.toLowerCase() !== vendorFilter.toLowerCase()) {
-      return false;
+    } else if (vendorFilter !== 'all') {
+      const vendor = activeVendorUsers.find(u => (u.id || '') === vendorFilter);
+      if (!vendor) return false;
+      if (t.sellerId) {
+        if (t.sellerId !== vendor.id) return false;
+      } else {
+        const op = (t.operator || '').toLowerCase();
+        if (op !== (vendor.name || '').toLowerCase() && op !== (vendor.username || '').toLowerCase()) return false;
+      }
     }
 
     if (timeframe === 'shift') {
@@ -148,10 +154,16 @@ export default function Reportes({
       const matchOperator = r.operator?.toLowerCase().includes(uName) || r.operator?.toLowerCase().includes(uUsername);
       if (!matchPerson && !matchWallet && !matchOperator) return false;
     } else if (vendorFilter !== 'all') {
-      const vLower = vendorFilter.toLowerCase();
-      const matchPerson = r.transferPerson?.toLowerCase().includes(vLower);
-      const matchWallet = r.walletOrExchangeName?.toLowerCase().includes(vLower);
-      if (!matchPerson && !matchWallet) return false;
+      const vendor = activeVendorUsers.find(u => (u.id || '') === vendorFilter);
+      if (!vendor) return false;
+      if (r.vendorId) {
+        if (r.vendorId !== vendor.id) return false;
+      } else {
+        const vLower = (vendor.name || vendor.username || '').toLowerCase();
+        const matchPerson = r.transferPerson?.toLowerCase().includes(vLower);
+        const matchWallet = r.walletOrExchangeName?.toLowerCase().includes(vLower);
+        if (!matchPerson && !matchWallet) return false;
+      }
     }
 
     if (timeframe === 'shift') {
@@ -284,8 +296,8 @@ export default function Reportes({
                   className="px-3 py-2 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs text-amber-400 font-bold outline-hidden focus:border-binance-yellow cursor-pointer"
                 >
                   <option value="all">👤 Todos los Vendedores</option>
-                  {uniqueVendors.map(v => (
-                    <option key={v} value={v}>{v}</option>
+                  {activeVendorUsers.map(v => (
+                    <option key={v.id} value={v.id}>{v.name || v.username} (@{v.username})</option>
                   ))}
                 </select>
               </div>

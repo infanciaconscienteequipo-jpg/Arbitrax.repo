@@ -65,7 +65,11 @@ export default function Exchanges({
 
   // Available Vendors strictly from public.users
   const vendorsList = users.filter(
-    u => u.active !== false && u.status === 'active' && ((u.role || '').toUpperCase() === 'VENDEDOR' || (u.role || '').toUpperCase() === 'SELLER')
+    u =>
+      u.active !== false &&
+      u.status === 'active' &&
+      (u.role || '').toUpperCase() === 'VENDEDOR' &&
+      u.organization_id === currentOrgId
   );
 
   // Filter exchanges by org and vendor
