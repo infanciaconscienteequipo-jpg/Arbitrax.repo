@@ -117,13 +117,15 @@ export default function Movimientos({
     setTimeout(() => setFormSuccess(''), 4000);
   };
 
-  // Extract unique vendors for filter dropdown
-  const uniqueVendors = Array.from(
-    new Set([
-      ...users.map(u => u.name || u.username),
-      ...transactions.map(t => t.operator),
-    ].filter(Boolean))
-  );
+  // Extract unique vendors for filter dropdown (only for non-sellers)
+  const uniqueVendors = isVendedor
+    ? []
+    : Array.from(
+        new Set([
+          ...users.map(u => u.name || u.username),
+          ...transactions.map(t => t.operator),
+        ].filter(Boolean))
+      );
 
   // Extract unique cryptos for filter
   const uniqueCryptos = Array.from(new Set(transactions.map(t => t.crypto.toUpperCase()))).filter(Boolean);

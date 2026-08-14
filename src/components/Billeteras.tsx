@@ -16,6 +16,8 @@ interface BilleterasProps {
   onFundWallet: (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => void;
   onAddWallet: (name: string, titular: string, initialBalance: number) => void;
   onUpdateWallet?: (walletId: string, updates: Partial<Wallet>) => void;
+  onBlockWallet?: (walletId: string, note: string) => Promise<boolean>;
+  onUnblockWallet?: (walletId: string) => Promise<boolean>;
 }
 
 export default function Billeteras({
@@ -27,6 +29,8 @@ export default function Billeteras({
   onFundWallet,
   onAddWallet,
   onUpdateWallet,
+  onBlockWallet,
+  onUnblockWallet,
 }: BilleterasProps) {
   const isVendedor = currentUser?.role === 'VENDEDOR';
   const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
@@ -39,7 +43,13 @@ export default function Billeteras({
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Vendedor Filter State
+  // Blocking Modal State
+  const [blockingWallet, setBlockingWallet] = useState<Wallet | null>(null);
+  const [blockReason, setBlockReason] = useState('');
+  const [isSubmittingBlock, setIsSubmittingBlock] = useState(false);
+  const [isSubmittingUnblock, setIsSubmittingUnblock] = useState(false);
+
+  // Vendedor Filter State (for Admin)
   const [vendorFilter, setVendorFilter] = useState('all');
 
   // Editing Wallet Balance & Limit state
@@ -106,24 +116,21 @@ export default function Billeteras({
     uniqueYears.push(new Date().getFullYear().toString());
   }
 
-  // Extract unique vendors for dropdown
-  const uniqueVendors = Array.from(
-    new Set([
-      ...users.map(u => u.name || u.username),
-      ...wallets.map(w => w.titular).filter(Boolean),
-      ...transactions.map(t => t.operator).filter(Boolean),
-    ])
-  ).filter(Boolean);
+  // Extract unique vendors for dropdown (only for admin)
+  const uniqueVendors = isVendedor
+    ? []
+    : Array.from(
+        new Set([
+          ...users.map(u => u.name || u.username),
+          ...wallets.map(w => w.titular).filter(Boolean),
+          ...transactions.map(t => t.operator).filter(Boolean),
+        ])
+      ).filter(Boolean);
 
   // Filter wallets by vendor/titular if selected
   const filteredWallets = wallets.filter(w => {
     if (isVendedor && currentUser) {
-      const uName = currentUser.name?.toLowerCase() || '';
-      const uUsername = currentUser.username?.toLowerCase() || '';
-      const matchVendorId = w.vendorId === currentUser.id;
-      const matchTitular = (w.titular && uName && w.titular.toLowerCase().includes(uName)) || (w.titular && uUsername && w.titular.toLowerCase().includes(uUsername));
-      const matchName = (w.name && uName && w.name.toLowerCase().includes(uName)) || (w.name && uUsername && w.name.toLowerCase().includes(uUsername));
-      if (!matchVendorId && !matchTitular && !matchName) return false;
+      if (!w.vendorId || w.vendorId !== currentUser.id) return false;
     } else if (vendorFilter !== 'all') {
       const vLower = vendorFilter.toLowerCase();
       const matchesTitular = w.titular?.toLowerCase().includes(vLower);
@@ -244,16 +251,42 @@ export default function Billeteras({
     setTimeout(() => setSuccessMsg(''), 4000);
   };
 
-  const handleToggleBlock = (w: Wallet) => {
-    if (!onUpdateWallet) return;
-    const newBlockedState = !w.blocked;
-    onUpdateWallet(w.id, { blocked: newBlockedState });
-    setSuccessMsg(
-      newBlockedState
-        ? `🔒 Billetera "${w.name}" bloqueada para operaciones.`
-        : `🔓 Billetera "${w.name}" desbloqueada exitosamente.`
-    );
-    setTimeout(() => setSuccessMsg(''), 4000);
+  const handleStartBlock = (w: Wallet) => {
+    setBlockingWallet(w);
+    setBlockReason('');
+  };
+
+  const handleConfirmBlock = async () => {
+    if (!blockingWallet || !blockReason.trim()) return;
+    setIsSubmittingBlock(true);
+    try {
+      if (onBlockWallet) {
+        await onBlockWallet(blockingWallet.id, blockReason.trim());
+      }
+      setSuccessMsg(`🔒 Billetera "${blockingWallet.name}" bloqueada exitosamente.`);
+      setBlockingWallet(null);
+      setBlockReason('');
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Error al bloquear la billetera');
+    } finally {
+      setIsSubmittingBlock(false);
+    }
+  };
+
+  const handleConfirmUnblock = async (w: Wallet) => {
+    setIsSubmittingUnblock(true);
+    try {
+      if (onUnblockWallet) {
+        await onUnblockWallet(w.id);
+      }
+      setSuccessMsg(`🔓 Billetera "${w.name}" desbloqueada exitosamente.`);
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Error al desbloquear la billetera');
+    } finally {
+      setIsSubmittingUnblock(false);
+    }
   };
 
   const handleCreateWalletSubmit = (e: React.FormEvent) => {
@@ -583,24 +616,22 @@ export default function Billeteras({
                         <Edit3 className="w-3.5 h-3.5" /> Modificar
                       </button>
 
-                      <button
-                        onClick={() => handleToggleBlock(w)}
-                        className={`flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border ${
-                          w.blocked
-                            ? 'bg-binance-green/20 hover:bg-binance-green/30 text-binance-green border-binance-green/40'
-                            : 'bg-binance-red/20 hover:bg-binance-red/30 text-binance-red border-binance-red/40'
-                        }`}
-                      >
-                        {w.blocked ? (
-                          <>
-                            <Unlock className="w-3.5 h-3.5" /> Desbloquear
-                          </>
-                        ) : (
-                          <>
-                            <Lock className="w-3.5 h-3.5" /> Bloquear
-                          </>
-                        )}
-                      </button>
+                      {w.blocked ? (
+                        <button
+                          onClick={() => handleConfirmUnblock(w)}
+                          disabled={isSubmittingUnblock}
+                          className="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border bg-binance-green/20 hover:bg-binance-green/30 text-binance-green border-binance-green/40 disabled:opacity-50"
+                        >
+                          <Unlock className="w-3.5 h-3.5" /> Desbloquear
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleStartBlock(w)}
+                          className="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border bg-binance-red/20 hover:bg-binance-red/30 text-binance-red border-binance-red/40"
+                        >
+                          <Lock className="w-3.5 h-3.5" /> Bloquear
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
@@ -1117,6 +1148,87 @@ export default function Billeteras({
           )}
         </div>
       </div>
+
+      {/* MODAL DE CONFIRMACIÓN DE BLOQUEO DE BILLETERA */}
+      {blockingWallet && (
+        <div className="fixed inset-0 bg-binance-black/85 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-binance-dark border border-binance-border p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl relative font-mono">
+            <div className="flex justify-between items-center border-b border-binance-border/60 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-binance-red/10 border border-binance-red/30 text-binance-red rounded-xl">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-white text-sm">
+                    ¿Confirmar bloqueo de billetera?
+                  </h3>
+                  <span className="text-[10px] text-binance-gray">Acción de seguridad preventiva</span>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setBlockingWallet(null);
+                  setBlockReason('');
+                }}
+                className="text-binance-gray hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="bg-binance-black p-4 rounded-xl border border-binance-border space-y-2">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-binance-gray">Nombre de la billetera:</span>
+                <span className="font-extrabold text-white">{blockingWallet.name}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-binance-gray">Titular:</span>
+                <span className="font-bold text-binance-yellow">{blockingWallet.titular || 'No especificado'}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs border-t border-binance-border/40 pt-2">
+                <span className="text-binance-gray">Saldo actual:</span>
+                <span className="font-black text-white text-sm">{formatMoney(blockingWallet.saldoPesos)}</span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                Motivo del bloqueo <span className="text-binance-red">* (obligatorio)</span>
+              </label>
+              <textarea
+                required
+                placeholder="Indique el motivo o incidente que amerita el bloqueo..."
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2.5 bg-binance-card border border-binance-border rounded-xl text-white text-xs outline-hidden focus:border-binance-red resize-none"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setBlockingWallet(null);
+                  setBlockReason('');
+                }}
+                className="flex-1 py-2.5 border border-binance-border text-binance-gray hover:text-white font-bold rounded-xl uppercase text-xs cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isSubmittingBlock || !blockReason.trim()}
+                onClick={handleConfirmBlock}
+                className="flex-1 py-2.5 bg-binance-red hover:bg-binance-red/90 disabled:opacity-40 text-white font-extrabold rounded-xl uppercase text-xs shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                {isSubmittingBlock ? 'Bloqueando...' : 'Confirmar Bloqueo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

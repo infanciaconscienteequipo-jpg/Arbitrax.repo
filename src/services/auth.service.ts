@@ -52,6 +52,7 @@ export const authService = {
       let normalizedRole: UserRole = 'VENDEDOR';
       if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
       else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
+      else if (rawRole === 'CONTADORA' || rawRole === 'CONTADOR') normalizedRole = 'CONTADORA';
 
       return {
         id: user.id,
@@ -78,6 +79,7 @@ export const authService = {
     let normalizedRole: UserRole = 'VENDEDOR';
     if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
     else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
+    else if (rawRole === 'CONTADORA' || rawRole === 'CONTADOR') normalizedRole = 'CONTADORA';
 
     const sessionData: User = {
       id: user.id,
@@ -130,6 +132,7 @@ export const authService = {
         let normRole: UserRole = 'VENDEDOR';
         if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
         else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+        else if (rawRole === 'CONTADORA' || rawRole === 'CONTADOR') normRole = 'CONTADORA';
 
         return {
           id: userData.id,
@@ -152,6 +155,7 @@ export const authService = {
       let normRole: UserRole = 'VENDEDOR';
       if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
       else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+      else if (rawRole === 'CONTADORA' || rawRole === 'CONTADOR') normRole = 'CONTADORA';
 
       return {
         id: row.id,
@@ -225,6 +229,7 @@ export const authService = {
       let normRole: UserRole = 'VENDEDOR';
       if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
       else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+      else if (rawRole === 'CONTADORA' || rawRole === 'CONTADOR') normRole = 'CONTADORA';
 
       return {
         id: userData.id,
@@ -293,20 +298,21 @@ export const authService = {
   },
 
   /**
-   * Crear usuario (SUPER_ADMIN, ADMIN o VENDEDOR) invocando la Supabase Edge Function 'create-user'
+   * Crear usuario (SUPER_ADMIN, ADMIN, CONTADORA o VENDEDOR) invocando la Supabase Edge Function 'create-user'
    */
   async createUser(params: {
     email: string;
     password?: string;
     name: string;
     username: string;
-    role: 'ADMIN' | 'VENDEDOR' | 'SUPER_ADMIN' | string;
+    role: 'ADMIN' | 'VENDEDOR' | 'SUPER_ADMIN' | 'CONTADORA' | string;
     organization_id: string | null;
   }): Promise<User> {
     const rawRole = (params.role || '').toUpperCase();
     let normalizedRole: UserRole = 'VENDEDOR';
     if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normalizedRole = 'SUPER_ADMIN';
     else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normalizedRole = 'ADMIN';
+    else if (rawRole === 'CONTADORA' || rawRole === 'CONTADOR') normalizedRole = 'CONTADORA';
 
     const cleanEmail = params.email.trim().toLowerCase();
     const rawPassword = params.password ?? '';
@@ -354,6 +360,7 @@ export const authService = {
     let normRole: UserRole = 'VENDEDOR';
     if (createdRoleRaw === 'SUPER_ADMIN') normRole = 'SUPER_ADMIN';
     else if (createdRoleRaw === 'ADMIN') normRole = 'ADMIN';
+    else if (createdRoleRaw === 'CONTADORA' || createdRoleRaw === 'CONTADOR') normRole = 'CONTADORA';
 
     return {
       id: data.user.id,
@@ -380,6 +387,23 @@ export const authService = {
     return this.createUser({
       ...params,
       role: 'VENDEDOR',
+    });
+  },
+
+  /**
+   * Crear Contadora para la organización del Administrador
+   */
+  async createContadora(params: {
+    email: string;
+    password?: string;
+    name: string;
+    username?: string;
+    organization_id: string;
+  }): Promise<User> {
+    return this.createUser({
+      ...params,
+      username: params.username || params.email.trim().toLowerCase().split('@')[0],
+      role: 'CONTADORA',
     });
   },
 
@@ -413,6 +437,8 @@ export const authService = {
       const r = role.toUpperCase();
       if (r === 'VENDEDOR' || r === 'SELLER') {
         query = query.or('role.ilike.VENDEDOR,role.ilike.SELLER,role.ilike.vendedor,role.ilike.operator');
+      } else if (r === 'CONTADORA' || r === 'CONTADOR') {
+        query = query.or('role.ilike.CONTADORA,role.ilike.CONTADOR');
       } else {
         query = query.ilike('role', role);
       }
@@ -433,6 +459,7 @@ export const authService = {
       let normRole: UserRole = 'VENDEDOR';
       if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
       else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+      else if (rawRole === 'CONTADORA' || rawRole === 'CONTADOR') normRole = 'CONTADORA';
 
       return {
         id: u.id,
@@ -471,6 +498,7 @@ export const authService = {
       let normRole: UserRole = 'VENDEDOR';
       if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
       else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+      else if (rawRole === 'CONTADORA' || rawRole === 'CONTADOR') normRole = 'CONTADORA';
       updatePayload.role = normRole;
     }
     if (data.organization_id !== undefined) updatePayload.organization_id = data.organization_id;

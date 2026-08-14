@@ -50,19 +50,22 @@ export default function TurnosControl({
   onStartShift,
   onEndShift,
 }: TurnosControlProps) {
+  const isContadora = currentUser?.role === 'CONTADORA';
   const isVendedor = currentUser?.role === 'VENDEDOR';
   const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
   const [operatorInput, setOperatorInput] = useState(currentOperator || '');
   const [selectedShiftForDetails, setSelectedShiftForDetails] = useState<Shift | null>(null);
   const [vendorFilter, setVendorFilter] = useState('all');
 
-  const uniqueVendors = Array.from(
-    new Set([
-      ...users.map(u => u.name || u.username),
-      ...shifts.map(s => s.operatorName),
-      ...transactions.map(t => t.operator),
-    ])
-  ).filter(Boolean);
+  const uniqueVendors = isVendedor
+    ? []
+    : Array.from(
+        new Set([
+          ...users.map(u => u.name || u.username),
+          ...shifts.map(s => s.operatorName),
+          ...transactions.map(t => t.operator),
+        ])
+      ).filter(Boolean);
 
   const filteredShifts = shifts.filter(s => {
     if (isVendedor && currentUser) {
@@ -328,112 +331,114 @@ export default function TurnosControl({
         </p>
       </div>
 
-      {/* ACTIVE SHIFT STATUS OR START SHIFT */}
-      {!activeShift ? (
-        <div className="bg-binance-card border border-binance-border p-6 rounded-2xl space-y-4 shadow-md">
-          <div className="flex items-center gap-2 text-binance-yellow">
-            <AlertTriangle className="w-5 h-5" />
-            <h3 className="font-extrabold text-sm uppercase">Sin Jornada Activa</h3>
-          </div>
-          <p className="text-xs text-binance-gray">
-            Inicie la jornada operativa para registrar el arqueo de inicio de caja y auditar el rendimiento de las operaciones del día.
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-3 pt-2">
-            <input
-              type="text"
-              placeholder="Nombre de Operador / Responsable"
-              value={operatorInput}
-              onChange={e => setOperatorInput(e.target.value)}
-              className="px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white text-xs outline-hidden focus:border-binance-yellow"
-            />
-            <button
-              onClick={() => onStartShift(operatorInput.trim() || 'Operador')}
-              className="px-6 py-2.5 bg-binance-yellow text-binance-black font-extrabold text-xs uppercase rounded-xl hover:bg-binance-yellow/90 transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
-            >
-              <Play className="w-4 h-4 fill-current" />
-              Iniciar Jornada de Trabajo
-            </button>
-          </div>
-        </div>
-      ) : (
-        activeShiftDetails && (
-          <div className="bg-binance-card border border-binance-green/40 p-6 rounded-2xl space-y-6 shadow-md">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-binance-border pb-4">
-              <div>
-                <span className="px-2.5 py-1 bg-binance-green/20 text-binance-green border border-binance-green/30 rounded text-[10px] font-bold uppercase tracking-wider font-mono">
-                  🟢 JORNADA EN CURSO
-                </span>
-                <h3 className="text-base font-extrabold text-white mt-2">
-                  Responsable: {activeShift.operatorName}
-                </h3>
-                <p className="text-xs text-binance-gray">
-                  Iniciada el {safeFormatDateTime(activeShift.startTime)}
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  onClick={() => setSelectedShiftForDetails(activeShift)}
-                  className="px-4 py-2.5 bg-binance-yellow text-binance-black font-extrabold text-xs uppercase rounded-xl hover:bg-binance-yellow/90 transition-all shadow-md cursor-pointer flex items-center gap-2"
-                >
-                  <Eye className="w-4 h-4" />
-                  Ver Detalles del Día
-                </button>
-
-                <button
-                  onClick={() => onEndShift(activeShift.id)}
-                  className="px-5 py-2.5 bg-binance-red text-white font-black text-xs uppercase rounded-xl hover:bg-binance-red/90 transition-all shadow-md cursor-pointer flex items-center gap-2"
-                >
-                  <Square className="w-4 h-4 fill-current" />
-                  Cerrar Jornada
-                </button>
-              </div>
+      {/* ACTIVE SHIFT STATUS OR START SHIFT (DISABLED FOR CONTADORA) */}
+      {!isContadora && (
+        !activeShift ? (
+          <div className="bg-binance-card border border-binance-border p-6 rounded-2xl space-y-4 shadow-md">
+            <div className="flex items-center gap-2 text-binance-yellow">
+              <AlertTriangle className="w-5 h-5" />
+              <h3 className="font-extrabold text-sm uppercase">Sin Jornada Activa</h3>
             </div>
+            <p className="text-xs text-binance-gray">
+              Inicie la jornada operativa para registrar el arqueo de inicio de caja y auditar el rendimiento de las operaciones del día.
+            </p>
 
-            {/* Live KPI Summary Grid including Promedios & Ingresos */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-binance-black p-4 rounded-xl border border-binance-border space-y-1">
-                <span className="text-[10px] text-binance-gray font-bold uppercase block">Precio Promedio Compra</span>
-                <span className="text-xl font-black text-binance-red font-mono">
-                  ${formatNumber(activeShiftDetails.avgBuyPrice)} <span className="text-xs text-binance-gray font-normal">ARS/USDT</span>
-                </span>
-                <span className="text-[10px] text-binance-gray block">
-                  Volumen: {formatNumber(activeShiftDetails.totalUsdtBought, 0)} USDT
-                </span>
-              </div>
-
-              <div className="bg-binance-black p-4 rounded-xl border border-binance-border space-y-1">
-                <span className="text-[10px] text-binance-gray font-bold uppercase block">Precio Promedio Venta</span>
-                <span className="text-xl font-black text-binance-green font-mono">
-                  ${formatNumber(activeShiftDetails.avgSellPrice)} <span className="text-xs text-binance-gray font-normal">ARS/USDT</span>
-                </span>
-                <span className="text-[10px] text-binance-gray block">
-                  Volumen: {formatNumber(activeShiftDetails.totalUsdtSold, 0)} USDT
-                </span>
-              </div>
-
-              <div className="bg-binance-black p-4 rounded-xl border border-binance-border space-y-1">
-                <span className="text-[10px] text-binance-gray font-bold uppercase block">Ingresos de Fondos</span>
-                <span className="text-xl font-black text-amber-400 font-mono">
-                  {formatMoney(activeShiftDetails.totalIncomeAmount)}
-                </span>
-                <span className="text-[10px] text-binance-gray block">
-                  {activeShiftDetails.totalIncomeCount} ingresos registrados
-                </span>
-              </div>
-
-              <div className="bg-binance-black p-4 rounded-xl border border-binance-border space-y-1">
-                <span className="text-[10px] text-binance-gray font-bold uppercase block">Ganancia de la Jornada</span>
-                <span className="text-xl font-black text-binance-yellow font-mono">
-                  {formatMoney(activeShiftDetails.totalGains)}
-                </span>
-                <span className="text-[10px] text-binance-gray block">
-                  {activeShiftDetails.shiftTxs.length} operaciones totales
-                </span>
-              </div>
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <input
+                type="text"
+                placeholder="Nombre de Operador / Responsable"
+                value={operatorInput}
+                onChange={e => setOperatorInput(e.target.value)}
+                className="px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white text-xs outline-hidden focus:border-binance-yellow"
+              />
+              <button
+                onClick={() => onStartShift(operatorInput.trim() || 'Operador')}
+                className="px-6 py-2.5 bg-binance-yellow text-binance-black font-extrabold text-xs uppercase rounded-xl hover:bg-binance-yellow/90 transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                Iniciar Jornada de Trabajo
+              </button>
             </div>
           </div>
+        ) : (
+          activeShiftDetails && (
+            <div className="bg-binance-card border border-binance-green/40 p-6 rounded-2xl space-y-6 shadow-md">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-binance-border pb-4">
+                <div>
+                  <span className="px-2.5 py-1 bg-binance-green/20 text-binance-green border border-binance-green/30 rounded text-[10px] font-bold uppercase tracking-wider font-mono">
+                    🟢 JORNADA EN CURSO
+                  </span>
+                  <h3 className="text-base font-extrabold text-white mt-2">
+                    Responsable: {activeShift.operatorName}
+                  </h3>
+                  <p className="text-xs text-binance-gray">
+                    Iniciada el {safeFormatDateTime(activeShift.startTime)}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={() => setSelectedShiftForDetails(activeShift)}
+                    className="px-4 py-2.5 bg-binance-yellow text-binance-black font-extrabold text-xs uppercase rounded-xl hover:bg-binance-yellow/90 transition-all shadow-md cursor-pointer flex items-center gap-2"
+                  >
+                    <Eye className="w-4 h-4" />
+                    Ver Detalles del Día
+                  </button>
+
+                  <button
+                    onClick={() => onEndShift(activeShift.id)}
+                    className="px-5 py-2.5 bg-binance-red text-white font-black text-xs uppercase rounded-xl hover:bg-binance-red/90 transition-all shadow-md cursor-pointer flex items-center gap-2"
+                  >
+                    <Square className="w-4 h-4 fill-current" />
+                    Cerrar Jornada
+                  </button>
+                </div>
+              </div>
+
+              {/* Live KPI Summary Grid including Promedios & Ingresos */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-binance-black p-4 rounded-xl border border-binance-border space-y-1">
+                  <span className="text-[10px] text-binance-gray font-bold uppercase block">Precio Promedio Compra</span>
+                  <span className="text-xl font-black text-binance-red font-mono">
+                    ${formatNumber(activeShiftDetails.avgBuyPrice)} <span className="text-xs text-binance-gray font-normal">ARS/USDT</span>
+                  </span>
+                  <span className="text-[10px] text-binance-gray block">
+                    Volumen: {formatNumber(activeShiftDetails.totalUsdtBought, 0)} USDT
+                  </span>
+                </div>
+
+                <div className="bg-binance-black p-4 rounded-xl border border-binance-border space-y-1">
+                  <span className="text-[10px] text-binance-gray font-bold uppercase block">Precio Promedio Venta</span>
+                  <span className="text-xl font-black text-binance-green font-mono">
+                    ${formatNumber(activeShiftDetails.avgSellPrice)} <span className="text-xs text-binance-gray font-normal">ARS/USDT</span>
+                  </span>
+                  <span className="text-[10px] text-binance-gray block">
+                    Volumen: {formatNumber(activeShiftDetails.totalUsdtSold, 0)} USDT
+                  </span>
+                </div>
+
+                <div className="bg-binance-black p-4 rounded-xl border border-binance-border space-y-1">
+                  <span className="text-[10px] text-binance-gray font-bold uppercase block">Ingresos de Fondos</span>
+                  <span className="text-xl font-black text-amber-400 font-mono">
+                    {formatMoney(activeShiftDetails.totalIncomeAmount)}
+                  </span>
+                  <span className="text-[10px] text-binance-gray block">
+                    {activeShiftDetails.totalIncomeCount} ingresos registrados
+                  </span>
+                </div>
+
+                <div className="bg-binance-black p-4 rounded-xl border border-binance-border space-y-1">
+                  <span className="text-[10px] text-binance-gray font-bold uppercase block">Ganancia de la Jornada</span>
+                  <span className="text-xl font-black text-binance-yellow font-mono">
+                    {formatMoney(activeShiftDetails.totalGains)}
+                  </span>
+                  <span className="text-[10px] text-binance-gray block">
+                    {activeShiftDetails.shiftTxs.length} operaciones totales
+                  </span>
+                </div>
+              </div>
+            </div>
+          )
         )
       )}
 
@@ -444,7 +449,7 @@ export default function TurnosControl({
             <FileText className="w-4 h-4 text-binance-yellow" />
             Historial de Jornadas e Informes Diarios
           </h3>
-          {isAdmin && (
+          {(isAdmin || isContadora) && uniqueVendors.length > 0 && (
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-binance-gray">Vendedor / Operador:</span>
               <select

@@ -138,9 +138,10 @@ export const dashboardService = {
 
       const users: User[] = (usersRes.data || []).map((u: any) => {
         const rawRole = (u.role || '').toUpperCase();
-        let normRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' = 'VENDEDOR';
+        let normRole: 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' | 'CONTADORA' = 'VENDEDOR';
         if (rawRole === 'SUPER_ADMIN' || rawRole === 'SUPERADMIN') normRole = 'SUPER_ADMIN';
         else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') normRole = 'ADMIN';
+        else if (rawRole === 'CONTADORA' || rawRole === 'CONTADOR') normRole = 'CONTADORA';
 
         return {
           id: u.id,

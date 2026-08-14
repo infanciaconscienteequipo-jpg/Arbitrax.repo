@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { AppState, Wallet, Transaction, P2PArbitrage, Shift, User, Organization, ExchangeAccount, IncomeExpenseRecord } from './types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { AppState, Wallet, Transaction, P2PArbitrage, Shift, User, Organization, ExchangeAccount, IncomeExpenseRecord, CryptoAdminTransfer } from './types';
 import { clearAllData } from './utils/dataStore';
 import { useAuth } from './hooks/useAuth';
 import RequireAuth from './auth/RequireAuth';
@@ -16,6 +16,7 @@ import Reportes from './components/Reportes';
 import TurnosControl from './components/TurnosControl';
 import Notificaciones from './components/Notificaciones';
 import Ajustes from './components/Ajustes';
+import AdminCryptoWallet from './components/AdminCryptoWallet';
 
 import { dashboardService } from './services/dashboard.service';
 import { transactionService } from './services/transaction.service';
@@ -66,7 +67,14 @@ export default function App() {
     organizations: authOrg ? [authOrg] : []
   });
 
+  const [cryptoTransfers, setCryptoTransfers] = useState<CryptoAdminTransfer[]>([]);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+
+  const currentUser = authUser || state.currentUser;
+  const isVendedor = currentUser?.role === 'VENDEDOR';
+  const isContadora = currentUser?.role === 'CONTADORA';
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+  const isAdmin = currentUser?.role === 'ADMIN' || isSuperAdmin;
 
   // Sincronizar el usuario autenticado de Supabase Auth con el estado de la app
   useEffect(() => {
@@ -80,6 +88,8 @@ export default function App() {
       // Redirección inicial basada en Rol
       if (authUser.role === 'SUPER_ADMIN') {
         setActiveTab('saas-dashboard');
+      } else if (authUser.role === 'CONTADORA') {
+        setActiveTab('cierre');
       } else {
         setActiveTab('dashboard');
       }
@@ -90,7 +100,16 @@ export default function App() {
     if (authUser && authUser.role !== 'SUPER_ADMIN' && activeTab.startsWith('saas-')) {
       setActiveTab('dashboard');
     }
+    if (authUser && authUser.role === 'CONTADORA' && activeTab !== 'cierre') {
+      setActiveTab('cierre');
+    }
   }, [authUser, activeTab]);
+
+  const fetchCryptoTransfers = useCallback(async () => {
+    if (!authUser) return;
+    const transfers = await walletService.listCryptoAdminTransfers(authUser.organization_id || undefined);
+    setCryptoTransfers(transfers);
+  }, [authUser]);
 
   // Cargar datos remotos desde Supabase
   useEffect(() => {
@@ -109,11 +128,11 @@ export default function App() {
         }));
       }
     });
-  }, [authUser]);
 
-  const currentUser = authUser || state.currentUser;
-  const isVendedor = currentUser?.role === 'VENDEDOR';
-  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+    if (isAdmin) {
+      fetchCryptoTransfers();
+    }
+  }, [authUser, isAdmin, fetchCryptoTransfers]);
 
   const handleLogout = async () => {
     await authLogout();
@@ -310,26 +329,37 @@ export default function App() {
     });
   };
 
-  const handleAddWallet = (walletName: string, titular: string, initialBalancePesos: number) => {
+  const handleAddWallet = async (walletName: string, titular: string, initialBalancePesos: number) => {
     const colors = ['blue', 'green', 'orange', 'purple', 'teal', 'cyan'];
     const randomColor = colors[state.wallets.length % colors.length];
-    const newWallet: Wallet = {
-      id: `wallet_${Date.now()}`,
+    
+    // VENDEDOR: strictly assign own user ID
+    const vendorId = currentUser?.role === 'VENDEDOR' ? currentUser.id : (currentUser?.id || '');
+
+    const walletPayload: Wallet = {
+      id: '',
       name: walletName,
       saldoPesos: initialBalancePesos,
       saldoUsdt: 0,
       color: randomColor,
       providerType: 'Billetera P2P',
       titular,
+      vendorId,
+      vendorName: currentUser?.name || currentUser?.username || '',
       organization_id: authOrg?.id || '',
       limitARS: 3000000,
       blocked: false,
     };
-    walletService.sync(newWallet);
-    setState(prev => ({
-      ...prev,
-      wallets: [...prev.wallets, newWallet],
-    }));
+
+    try {
+      const createdWallet = await walletService.create(walletPayload);
+      setState(prev => ({
+        ...prev,
+        wallets: [...prev.wallets, createdWallet],
+      }));
+    } catch (err: any) {
+      console.error('Error al crear billetera:', err);
+    }
   };
 
   const handleUpdateWallet = (walletId: string, updates: Partial<Wallet>) => {
@@ -344,6 +374,62 @@ export default function App() {
       });
       return { ...prev, wallets: updatedWallets };
     });
+  };
+
+  // RPC-based Wallet Blocking / Unblocking
+  const handleBlockWallet = async (walletId: string, note: string) => {
+    const success = await walletService.block(walletId, note);
+    if (success) {
+      setState(prev => ({
+        ...prev,
+        wallets: prev.wallets.map(w => w.id === walletId ? { ...w, blocked: true } : w),
+      }));
+    }
+    return success;
+  };
+
+  const handleUnblockWallet = async (walletId: string) => {
+    const success = await walletService.unblock(walletId);
+    if (success) {
+      setState(prev => ({
+        ...prev,
+        wallets: prev.wallets.map(w => w.id === walletId ? { ...w, blocked: false } : w),
+      }));
+    }
+    return success;
+  };
+
+  // Crypto Transfer from Seller Exchange to Admin
+  const handleTransferCryptoToAdmin = async (params: {
+    exchangeId: string;
+    amount: number;
+    asset?: string;
+    notes?: string;
+  }) => {
+    const res = await walletService.transferCryptoToAdmin({
+      ...params,
+      vendorId: currentUser?.id,
+      vendorName: currentUser?.name,
+      organizationId: authOrg?.id,
+    });
+
+    if (res.success) {
+      // Update exchange locally
+      if (typeof res.remaining_balance === 'number') {
+        handleUpdateExchangeBalance(params.exchangeId, res.remaining_balance);
+      } else {
+        setState(prev => ({
+          ...prev,
+          exchanges: prev.exchanges.map(ex =>
+            ex.id === params.exchangeId
+              ? { ...ex, balanceCrypto: Math.max(0, ex.balanceCrypto - params.amount) }
+              : ex
+          ),
+        }));
+      }
+      fetchCryptoTransfers();
+    }
+    return res;
   };
 
   const handleAddP2PCalc = (calc: P2PArbitrage) => {
@@ -444,6 +530,8 @@ export default function App() {
                         <span className="px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded text-[9px] font-extrabold">SUPER ADMIN</span>
                       ) : currentUser.role === 'ADMIN' ? (
                         <span className="px-1.5 py-0.2 bg-blue-500/20 text-blue-300 rounded text-[9px] font-bold">ADMIN</span>
+                      ) : currentUser.role === 'CONTADORA' ? (
+                        <span className="px-1.5 py-0.2 bg-purple-500/20 text-purple-300 rounded text-[9px] font-bold">CONTADORA</span>
                       ) : (
                         <span className="px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded text-[9px] font-bold">VENDEDOR</span>
                       )}
@@ -535,6 +623,20 @@ export default function App() {
                   </button>
                 </div>
               </>
+            ) : isContadora ? (
+              <>
+                <div className="hidden md:block px-3 py-2 bg-purple-500/10 border border-purple-500/30 rounded-xl mb-1 text-[10px] font-bold text-purple-300 uppercase tracking-widest flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" /> Rol Contadora
+                </div>
+
+                <button
+                  onClick={() => setActiveTab('cierre')}
+                  className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer bg-binance-card text-amber-400 border-l-2 border-amber-400"
+                >
+                  <Clock className="w-4 h-4 text-amber-400" />
+                  Cierres de Jornada
+                </button>
+              </>
             ) : (
               <>
                 <button
@@ -576,6 +678,18 @@ export default function App() {
                   <Coins className="w-4 h-4 text-binance-green" />
                   Exchanges
                 </button>
+
+                {isAdmin && !isVendedor && (
+                  <button
+                    onClick={() => setActiveTab('admin-crypto')}
+                    className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      activeTab === 'admin-crypto' ? 'bg-binance-card text-binance-yellow border-l-2 border-binance-yellow' : 'text-binance-gray hover:text-white'
+                    }`}
+                  >
+                    <Coins className="w-4 h-4 text-binance-yellow" />
+                    Billetera Crypto
+                  </button>
+                )}
 
                 {!isVendedor && (
                   <button
@@ -658,114 +772,7 @@ export default function App() {
 
           {/* MAIN DISPLAY AREA */}
           <main className="flex-1 min-w-0">
-            {(activeTab.startsWith('saas-') || activeTab === 'saas-admin') && isSuperAdmin && (
-              <SaasAdmin
-                organizations={state.organizations || []}
-                users={state.users}
-                currentUser={currentUser as any}
-                onUpdateOrganizations={handleUpdateOrganizations}
-                onAddOrganization={handleAddOrganization}
-                onAddUser={handleAddUser}
-                onUpdateUsers={handleUpdateUsers}
-                activeSection={activeTab.replace('saas-', '')}
-                onSectionChange={(sec) => setActiveTab(`saas-${sec}`)}
-              />
-            )}
-
-            {activeTab === 'dashboard' && (
-              <Dashboard
-                wallets={state.wallets}
-                exchanges={state.exchanges}
-                transactions={state.transactions}
-                incomeExpenses={state.incomeExpenses}
-                activeShiftId={state.activeShiftId}
-                activeShift={activeShift}
-                currentUser={currentUser as any}
-                users={state.users}
-                onSelectTab={(tab) => setActiveTab(tab)}
-              />
-            )}
-
-            {activeTab === 'movimientos' && (
-              <Movimientos
-                transactions={state.transactions}
-                wallets={state.wallets}
-                exchanges={state.exchanges}
-                users={state.users}
-                currentUser={currentUser as any}
-                onClearTransactions={handleClearTransactions}
-                onAddTransaction={handleAddTransaction}
-              />
-            )}
-
-            {activeTab === 'billeteras' && (
-              <Billeteras
-                wallets={state.wallets}
-                transactions={state.transactions}
-                users={state.users}
-                currentUser={currentUser as any}
-                activeShiftId={state.activeShiftId}
-                onFundWallet={handleFundWallet}
-                onAddWallet={handleAddWallet}
-                onUpdateWallet={handleUpdateWallet}
-              />
-            )}
-
-            {activeTab === 'exchanges' && (
-              <Exchanges
-                exchanges={state.exchanges}
-                users={state.users}
-                currentUser={currentUser as any}
-                onAddExchange={handleAddExchange}
-                onUpdateExchangeBalance={handleUpdateExchangeBalance}
-              />
-            )}
-
-            {activeTab === 'vendedores' && !isVendedor && (
-              <VendedoresManager
-                users={state.users}
-                currentUser={currentUser as any}
-                onAddUser={handleAddUser}
-                onDeleteUser={handleDeleteUser}
-                onUpdateUsers={handleUpdateUsers}
-              />
-            )}
-
-            {activeTab === 'fondos' && (
-              <Fondos
-                wallets={state.wallets}
-                exchanges={state.exchanges}
-                incomeExpenses={state.incomeExpenses}
-                currentUser={currentUser as any}
-                users={state.users}
-                activeShiftId={state.activeShiftId}
-                onAddIncomeExpense={handleAddIncomeExpense}
-              />
-            )}
-
-            {activeTab === 'calculadora' && (
-              <CalculadoraP2P
-                p2pCalcs={state.p2pCalcs}
-                wallets={state.wallets}
-                currentUser={currentUser as any}
-                onAddP2PCalc={handleAddP2PCalc}
-                onAddTransaction={handleAddTransaction}
-                activeShiftId={state.activeShiftId}
-              />
-            )}
-
-            {activeTab === 'reportes' && !isVendedor && (
-              <Reportes
-                transactions={state.transactions}
-                incomeExpenses={state.incomeExpenses}
-                users={state.users}
-                currentUser={currentUser as any}
-                activeShiftId={state.activeShiftId}
-                activeShift={activeShift}
-              />
-            )}
-
-            {activeTab === 'cierre' && (
+            {isContadora ? (
               <TurnosControl
                 shifts={state.shifts}
                 activeShift={activeShift}
@@ -779,21 +786,158 @@ export default function App() {
                 onStartShift={handleStartShift}
                 onEndShift={handleEndShift}
               />
-            )}
+            ) : (
+              <>
+                {(activeTab.startsWith('saas-') || activeTab === 'saas-admin') && isSuperAdmin && (
+                  <SaasAdmin
+                    organizations={state.organizations || []}
+                    users={state.users}
+                    currentUser={currentUser as any}
+                    onUpdateOrganizations={handleUpdateOrganizations}
+                    onAddOrganization={handleAddOrganization}
+                    onAddUser={handleAddUser}
+                    onUpdateUsers={handleUpdateUsers}
+                    activeSection={activeTab.replace('saas-', '')}
+                    onSectionChange={(sec) => setActiveTab(`saas-${sec}`)}
+                  />
+                )}
 
-            {activeTab === 'notificaciones' && (
-              <Notificaciones
-                wallets={state.wallets}
-                exchanges={state.exchanges}
-                transactions={state.transactions}
-              />
-            )}
+                {activeTab === 'dashboard' && (
+                  <Dashboard
+                    wallets={state.wallets}
+                    exchanges={state.exchanges}
+                    transactions={state.transactions}
+                    incomeExpenses={state.incomeExpenses}
+                    activeShiftId={state.activeShiftId}
+                    activeShift={activeShift}
+                    currentUser={currentUser as any}
+                    users={state.users}
+                    onSelectTab={(tab) => setActiveTab(tab)}
+                  />
+                )}
 
-            {activeTab === 'ajustes' && !isVendedor && (
-              <Ajustes
-                currentUser={currentUser as any}
-                onClearData={handleClearTransactions}
-              />
+                {activeTab === 'movimientos' && (
+                  <Movimientos
+                    transactions={state.transactions}
+                    wallets={state.wallets}
+                    exchanges={state.exchanges}
+                    users={state.users}
+                    currentUser={currentUser as any}
+                    onClearTransactions={handleClearTransactions}
+                    onAddTransaction={handleAddTransaction}
+                  />
+                )}
+
+                {activeTab === 'billeteras' && (
+                  <Billeteras
+                    wallets={state.wallets}
+                    transactions={state.transactions}
+                    users={state.users}
+                    currentUser={currentUser as any}
+                    activeShiftId={state.activeShiftId}
+                    onFundWallet={handleFundWallet}
+                    onAddWallet={handleAddWallet}
+                    onUpdateWallet={handleUpdateWallet}
+                    onBlockWallet={handleBlockWallet}
+                    onUnblockWallet={handleUnblockWallet}
+                  />
+                )}
+
+                {activeTab === 'exchanges' && (
+                  <Exchanges
+                    exchanges={state.exchanges}
+                    users={state.users}
+                    currentUser={currentUser as any}
+                    onAddExchange={handleAddExchange}
+                    onUpdateExchangeBalance={handleUpdateExchangeBalance}
+                    onTransferCryptoToAdmin={handleTransferCryptoToAdmin}
+                  />
+                )}
+
+                {activeTab === 'admin-crypto' && isAdmin && (
+                  <AdminCryptoWallet
+                    transfers={cryptoTransfers}
+                    users={state.users}
+                    currentUser={currentUser as any}
+                    onRefresh={fetchCryptoTransfers}
+                  />
+                )}
+
+                {activeTab === 'vendedores' && !isVendedor && (
+                  <VendedoresManager
+                    users={state.users}
+                    currentUser={currentUser as any}
+                    onAddUser={handleAddUser}
+                    onDeleteUser={handleDeleteUser}
+                    onUpdateUsers={handleUpdateUsers}
+                  />
+                )}
+
+                {activeTab === 'fondos' && (
+                  <Fondos
+                    wallets={state.wallets}
+                    exchanges={state.exchanges}
+                    incomeExpenses={state.incomeExpenses}
+                    currentUser={currentUser as any}
+                    users={state.users}
+                    activeShiftId={state.activeShiftId}
+                    onAddIncomeExpense={handleAddIncomeExpense}
+                  />
+                )}
+
+                {activeTab === 'calculadora' && (
+                  <CalculadoraP2P
+                    p2pCalcs={state.p2pCalcs}
+                    wallets={state.wallets}
+                    currentUser={currentUser as any}
+                    onAddP2PCalc={handleAddP2PCalc}
+                    onAddTransaction={handleAddTransaction}
+                    activeShiftId={state.activeShiftId}
+                  />
+                )}
+
+                {activeTab === 'reportes' && !isVendedor && (
+                  <Reportes
+                    transactions={state.transactions}
+                    incomeExpenses={state.incomeExpenses}
+                    users={state.users}
+                    currentUser={currentUser as any}
+                    activeShiftId={state.activeShiftId}
+                    activeShift={activeShift}
+                  />
+                )}
+
+                {activeTab === 'cierre' && (
+                  <TurnosControl
+                    shifts={state.shifts}
+                    activeShift={activeShift}
+                    wallets={state.wallets}
+                    exchanges={state.exchanges}
+                    incomeExpenses={state.incomeExpenses}
+                    transactions={state.transactions}
+                    users={state.users}
+                    currentUser={currentUser as any}
+                    currentOperator={currentUser?.name || state.currentOperator}
+                    onStartShift={handleStartShift}
+                    onEndShift={handleEndShift}
+                  />
+                )}
+
+                {activeTab === 'notificaciones' && (
+                  <Notificaciones
+                    wallets={state.wallets}
+                    exchanges={state.exchanges}
+                    transactions={state.transactions}
+                  />
+                )}
+
+                {activeTab === 'ajustes' && !isVendedor && (
+                  <Ajustes
+                    currentUser={currentUser as any}
+                    onClearData={handleClearTransactions}
+                  />
+                )}
+              </>
             )}
           </main>
         </div>

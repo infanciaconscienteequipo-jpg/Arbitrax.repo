@@ -1,6 +1,21 @@
 import React, { useState } from 'react';
 import { ExchangeAccount, User, Wallet } from '../types';
-import { Building2, Coins, Plus, User as UserIcon, Trash2, ArrowUpRight, ArrowDownLeft, ShieldCheck, Wallet as WalletIcon } from 'lucide-react';
+import {
+  Building2,
+  Coins,
+  Plus,
+  User as UserIcon,
+  Trash2,
+  ArrowUpRight,
+  ArrowDownLeft,
+  ShieldCheck,
+  Wallet as WalletIcon,
+  Send,
+  AlertTriangle,
+  CheckCircle2,
+  Lock,
+  Sparkles
+} from 'lucide-react';
 
 interface ExchangesProps {
   exchanges: ExchangeAccount[];
@@ -9,6 +24,11 @@ interface ExchangesProps {
   onAddExchange: (exchange: Omit<ExchangeAccount, 'id'>) => void;
   onUpdateExchangeBalance?: (exchangeId: string, newBalance: number) => void;
   onDeleteExchange?: (id: string) => void;
+  onTransferCryptoToAdmin?: (params: {
+    exchangeId: string;
+    amount: number;
+    notes?: string;
+  }) => Promise<{ success: boolean; error?: string }>;
 }
 
 export default function Exchanges({
@@ -17,10 +37,20 @@ export default function Exchanges({
   currentUser,
   onAddExchange,
   onDeleteExchange,
+  onTransferCryptoToAdmin,
 }: ExchangesProps) {
   const [selectedVendorFilter, setSelectedVendorFilter] = useState<string>('all');
   const [showAddModal, setShowAddModal] = useState(false);
   
+  // Transfer to Admin Modal State
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferExchangeId, setTransferExchangeId] = useState<string>('');
+  const [transferAmount, setTransferAmount] = useState<number | ''>('');
+  const [transferNotes, setTransferNotes] = useState<string>('');
+  const [transferError, setTransferError] = useState<string>('');
+  const [transferSuccess, setTransferSuccess] = useState<string>('');
+  const [isTransferring, setIsTransferring] = useState<boolean>(false);
+
   // Form State
   const [name, setName] = useState('');
   const [balanceCrypto, setBalanceCrypto] = useState<number>(0);
@@ -28,6 +58,7 @@ export default function Exchanges({
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
   const isAdmin = currentUser?.role === 'ADMIN' || isSuperAdmin;
+  const isVendedor = currentUser?.role === 'VENDEDOR';
   const currentOrgId = currentUser?.organization_id || '';
 
   // Available Vendors
@@ -36,15 +67,10 @@ export default function Exchanges({
   ).map((name, i) => ({ id: name, name, username: name, role: 'VENDEDOR' } as User));
 
   // Filter exchanges by org and vendor
-  const isVendedor = currentUser?.role === 'VENDEDOR';
   const filteredExchanges = exchanges.filter(ex => {
     if (ex.organization_id && ex.organization_id !== currentOrgId) return false;
     if (isVendedor && currentUser) {
-      const uName = currentUser.name?.toLowerCase() || '';
-      const uUsername = currentUser.username?.toLowerCase() || '';
-      const matchId = ex.vendorId === currentUser.id;
-      const matchName = (ex.vendorName && uName && ex.vendorName.toLowerCase().includes(uName)) || (ex.vendorName && uUsername && ex.vendorName.toLowerCase().includes(uUsername));
-      if (!matchId && !matchName) return false;
+      if (!ex.vendorId || ex.vendorId !== currentUser.id) return false;
     } else if (selectedVendorFilter !== 'all') {
       const vLower = selectedVendorFilter.toLowerCase();
       const matchId = ex.vendorId === selectedVendorFilter;
@@ -54,9 +80,78 @@ export default function Exchanges({
     return true;
   });
 
+  // Exchanges owned by current user (for transfer modal)
+  const myExchanges = exchanges.filter(ex => {
+    if (ex.organization_id && ex.organization_id !== currentOrgId) return false;
+    if (isVendedor && currentUser) {
+      return Boolean(ex.vendorId && ex.vendorId === currentUser.id);
+    }
+    return true;
+  });
+
+  const selectedTransferExchange = myExchanges.find(ex => ex.id === transferExchangeId) || myExchanges[0];
+
   const totalCryptoStock = filteredExchanges.reduce((sum, ex) => sum + ex.balanceCrypto, 0);
   const estimatedUsdtRate = 1240; // ARS per USDT rate
   const totalArsEquivalent = totalCryptoStock * estimatedUsdtRate;
+
+  const handleOpenTransfer = (exchange?: ExchangeAccount) => {
+    const targetId = exchange?.id || (myExchanges.length > 0 ? myExchanges[0].id : '');
+    setTransferExchangeId(targetId);
+    setTransferAmount('');
+    setTransferNotes('');
+    setTransferError('');
+    setTransferSuccess('');
+    setShowTransferModal(true);
+  };
+
+  const handleTransferSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onTransferCryptoToAdmin) return;
+
+    if (!selectedTransferExchange) {
+      setTransferError('Debe seleccionar una cuenta de Exchange origen.');
+      return;
+    }
+
+    const numAmount = typeof transferAmount === 'number' ? transferAmount : 0;
+    if (numAmount <= 0) {
+      setTransferError('La cantidad a transferir debe ser mayor a cero.');
+      return;
+    }
+
+    if (numAmount > selectedTransferExchange.balanceCrypto) {
+      setTransferError(`Saldo insuficiente en ${selectedTransferExchange.name}. Disponible: ${selectedTransferExchange.balanceCrypto} USDT.`);
+      return;
+    }
+
+    setIsTransferring(true);
+    setTransferError('');
+
+    try {
+      const res = await onTransferCryptoToAdmin({
+        exchangeId: selectedTransferExchange.id,
+        amount: numAmount,
+        notes: transferNotes.trim() || undefined,
+      });
+
+      if (res.success) {
+        setTransferSuccess(`✅ Se transfirieron con éxito ${numAmount} USDT a la Billetera Administrativa.`);
+        setTimeout(() => {
+          setShowTransferModal(false);
+          setTransferSuccess('');
+          setTransferAmount('');
+          setTransferNotes('');
+        }, 2000);
+      } else {
+        setTransferError(res.error || 'Error al procesar la transferencia.');
+      }
+    } catch (err: any) {
+      setTransferError(err?.message || 'Error inesperado al conectar con el servidor.');
+    } finally {
+      setIsTransferring(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,17 +203,29 @@ export default function Exchanges({
             <p className="text-xs text-binance-gray mt-1">
               {isAdmin
                 ? 'Monitoreo unificado de cuentas de Exchanges (Binance, Bybit, Lemon, etc.) y stock individual por vendedor.'
-                : 'Tus cuentas de Exchange asociadas para la compra/venta de activos P2P.'}
+                : 'Tus cuentas de Exchange asociadas para la compra/venta de activos P2P y transferencia de custodia.'}
             </p>
           </div>
 
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-binance-yellow text-binance-black font-extrabold text-xs rounded-xl shadow-lg hover:bg-binance-yellow/90 cursor-pointer uppercase tracking-wider"
-          >
-            <Plus className="w-4 h-4" />
-            Nueva Exchange
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            {myExchanges.length > 0 && onTransferCryptoToAdmin && (
+              <button
+                onClick={() => handleOpenTransfer()}
+                className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg cursor-pointer uppercase tracking-wider transition-all"
+              >
+                <Send className="w-4 h-4" />
+                Enviar al Administrador
+              </button>
+            )}
+
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-binance-yellow text-binance-black font-extrabold text-xs rounded-xl shadow-lg hover:bg-binance-yellow/90 cursor-pointer uppercase tracking-wider"
+            >
+              <Plus className="w-4 h-4" />
+              Nueva Exchange
+            </button>
+          </div>
         </div>
 
         {/* STATS BANNER */}
@@ -205,6 +312,17 @@ export default function Exchanges({
                 </span>
               </div>
 
+              {/* ACTION: Enviar al administrador */}
+              {onTransferCryptoToAdmin && (
+                <button
+                  onClick={() => handleOpenTransfer(ex)}
+                  className="w-full py-2 px-3 bg-binance-black hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  Enviar al Administrador
+                </button>
+              )}
+
               <div className="flex justify-between items-center text-[10px] text-binance-gray pt-1 border-t border-binance-border/40">
                 <span className="flex items-center gap-1 text-binance-green font-bold">
                   <ShieldCheck className="w-3.5 h-3.5" /> Estado Operativo Real
@@ -223,6 +341,150 @@ export default function Exchanges({
           </div>
         )}
       </div>
+
+      {/* MODAL TRANSFERENCIA VENDEDOR -> ADMIN */}
+      {showTransferModal && selectedTransferExchange && (
+        <div className="fixed inset-0 bg-binance-black/85 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-binance-dark border border-binance-border p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl relative">
+            <div className="flex justify-between items-center border-b border-binance-border/60 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-xl">
+                  <Send className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm">
+                    Enviar Crypto al Administrador
+                  </h3>
+                  <span className="text-[10px] text-binance-gray">Transferencia segura atómica a Bóveda Central</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowTransferModal(false)}
+                className="text-binance-gray hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {transferError && (
+              <div className="p-3 bg-binance-red/20 border border-binance-red/40 rounded-xl text-binance-red text-xs font-bold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                {transferError}
+              </div>
+            )}
+
+            {transferSuccess && (
+              <div className="p-3 bg-binance-green/20 border border-binance-green/40 rounded-xl text-binance-green text-xs font-bold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                {transferSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleTransferSubmit} className="space-y-4 text-xs">
+              {/* Select Exchange origen */}
+              <div>
+                <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                  Exchange Origen *
+                </label>
+                <select
+                  value={transferExchangeId}
+                  onChange={e => setTransferExchangeId(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow font-bold"
+                >
+                  {myExchanges.map(ex => (
+                    <option key={ex.id} value={ex.id}>
+                      {ex.name} — Saldo: {ex.balanceCrypto} USDT
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Saldo Disponible & Saldo Posterior calculation */}
+              <div className="grid grid-cols-2 gap-3 bg-binance-black p-3.5 rounded-xl border border-binance-border">
+                <div>
+                  <span className="text-[10px] text-binance-gray block font-bold">Saldo Disponible</span>
+                  <span className="text-base font-black text-binance-green font-mono">
+                    {selectedTransferExchange.balanceCrypto.toLocaleString()} USDT
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-binance-gray block font-bold">Saldo Posterior</span>
+                  <span className="text-base font-black text-white font-mono">
+                    {Math.max(
+                      0,
+                      selectedTransferExchange.balanceCrypto -
+                        (typeof transferAmount === 'number' ? transferAmount : 0)
+                    ).toLocaleString()}{' '}
+                    USDT
+                  </span>
+                </div>
+              </div>
+
+              {/* Amount input */}
+              <div>
+                <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                  Cantidad a Transferir (USDT) *
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    placeholder="0.00"
+                    value={transferAmount}
+                    onChange={e => setTransferAmount(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    max={selectedTransferExchange.balanceCrypto}
+                    className="w-full px-3 py-2.5 bg-binance-card border border-binance-border rounded-xl text-binance-green font-black text-sm outline-hidden focus:border-binance-yellow font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setTransferAmount(selectedTransferExchange.balanceCrypto)}
+                    className="absolute right-2 top-2 px-2 py-1 bg-binance-black hover:bg-binance-border text-binance-yellow border border-binance-yellow/30 text-[10px] font-bold rounded-lg cursor-pointer"
+                  >
+                    MAX
+                  </button>
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                  Observaciones / Motivo del Envío
+                </label>
+                <textarea
+                  placeholder="ej. Cierre de turno, reposición de custodia administrativa..."
+                  value={transferNotes}
+                  onChange={e => setTransferNotes(e.target.value)}
+                  rows={2}
+                  className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow resize-none"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTransferModal(false)}
+                  className="flex-1 py-2.5 border border-binance-border text-binance-gray hover:text-white font-bold rounded-xl uppercase text-xs cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    isTransferring ||
+                    typeof transferAmount !== 'number' ||
+                    transferAmount <= 0 ||
+                    transferAmount > selectedTransferExchange.balanceCrypto
+                  }
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold rounded-xl uppercase text-xs shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {isTransferring ? 'Transfiriendo...' : 'Confirmar Envío'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* MODAL NUEVA EXCHANGE */}
       {showAddModal && (
@@ -299,3 +561,4 @@ export default function Exchanges({
     </div>
   );
 }
+

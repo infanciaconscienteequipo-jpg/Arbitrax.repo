@@ -184,8 +184,26 @@ serve(async (req) => {
     let targetOrgId: string | null = null;
 
     if (callerRole === "ADMIN") {
-      // ADMIN can ONLY create VENDEDOR for its own organization
-      targetRole = "VENDEDOR";
+      const normRequestedRole = (requestedRole || "VENDEDOR").toUpperCase();
+
+      if (
+        normRequestedRole === "ADMIN" ||
+        normRequestedRole === "ADMINISTRADOR" ||
+        normRequestedRole === "SUPER_ADMIN" ||
+        normRequestedRole === "SUPERADMIN"
+      ) {
+        return new Response(
+          JSON.stringify({ error: "Un Administrador no puede crear usuarios Administradores ni Super Administradores." }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (normRequestedRole === "CONTADORA" || normRequestedRole === "CONTADOR") {
+        targetRole = "CONTADORA";
+      } else {
+        targetRole = "VENDEDOR";
+      }
+
       if (!callerProfile.organization_id) {
         return new Response(
           JSON.stringify({ error: "Tu usuario administrador no tiene una organización asignada." }),
@@ -194,15 +212,22 @@ serve(async (req) => {
       }
       targetOrgId = callerProfile.organization_id;
     } else if (callerRole === "SUPER_ADMIN") {
-      // SUPER_ADMIN can create ADMIN or VENDEDOR
       const normRequestedRole = (requestedRole || "VENDEDOR").toUpperCase();
-      if (normRequestedRole === "SUPER_ADMIN") {
+
+      if (normRequestedRole === "SUPER_ADMIN" || normRequestedRole === "SUPERADMIN") {
         return new Response(
           JSON.stringify({ error: "No está permitido crear otro SUPER_ADMIN." }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      targetRole = normRequestedRole === "ADMIN" || normRequestedRole === "ADMINISTRADOR" ? "ADMIN" : "VENDEDOR";
+
+      if (normRequestedRole === "ADMIN" || normRequestedRole === "ADMINISTRADOR") {
+        targetRole = "ADMIN";
+      } else if (normRequestedRole === "CONTADORA" || normRequestedRole === "CONTADOR") {
+        targetRole = "CONTADORA";
+      } else {
+        targetRole = "VENDEDOR";
+      }
 
       // Verify organization provided for target
       if (!reqOrgId) {
@@ -226,6 +251,31 @@ serve(async (req) => {
         );
       }
       targetOrgId = orgData.id;
+    }
+
+    // Constraint: CONTADORA must always belong to an organization and maximum 1 active CONTADORA per organization
+    if (targetRole === "CONTADORA") {
+      if (!targetOrgId) {
+        return new Response(
+          JSON.stringify({ error: "La CONTADORA debe pertenecer siempre a una organización." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const { data: existingContadora } = await supabaseAdmin
+        .from("users")
+        .select("id, name, username, role, active, status")
+        .eq("organization_id", targetOrgId)
+        .or("role.ilike.CONTADORA,role.ilike.CONTADOR")
+        .in("status", ["active", "enabled"])
+        .maybeSingle();
+
+      if (existingContadora && existingContadora.active !== false) {
+        return new Response(
+          JSON.stringify({ error: "Esta organización ya tiene una CONTADORA." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     // 4. Check for duplicate Username in public.users

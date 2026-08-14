@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
 import { authService } from '../services/auth.service';
-import { UserCheck, Plus, Archive, ShieldAlert, Edit2, Check, X, RefreshCw, Mail } from 'lucide-react';
+import { UserCheck, Plus, Archive, ShieldAlert, Edit2, Check, X, RefreshCw, Mail, Users, FileSpreadsheet, ShieldCheck } from 'lucide-react';
 
 interface VendedoresManagerProps {
   users: User[];
@@ -22,6 +22,7 @@ export default function VendedoresManager({
   onDeleteUser,
   onUpdateUsers,
 }: VendedoresManagerProps) {
+  const [activeSubTab, setActiveSubTab] = useState<'vendedores' | 'contadora'>('vendedores');
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -30,6 +31,7 @@ export default function VendedoresManager({
   const [successMsg, setSuccessMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const [sellers, setSellers] = useState<User[]>([]);
+  const [contadoras, setContadoras] = useState<User[]>([]);
   const [showArchived, setShowArchived] = useState(false);
 
   // Estado para edición en línea
@@ -37,8 +39,10 @@ export default function VendedoresManager({
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
 
-  // Cargar vendedores exclusivamente desde Supabase para la empresa activa
-  const loadSellersFromSupabase = async () => {
+  const activeContadora = contadoras.find(c => c.active !== false && c.status === 'active');
+
+  // Cargar usuarios exclusivamente desde Supabase para la empresa activa
+  const loadUsersFromSupabase = async () => {
     if (!currentUser?.organization_id) return;
     setLoading(true);
     try {
@@ -47,19 +51,24 @@ export default function VendedoresManager({
         const r = (u.role || '').toUpperCase();
         return r === 'VENDEDOR' || r === 'SELLER';
       });
+      const contadorasOnly = fetchedUsers.filter(u => {
+        const r = (u.role || '').toUpperCase();
+        return r === 'CONTADORA' || r === 'CONTADOR';
+      });
       setSellers(sellersOnly);
+      setContadoras(contadorasOnly);
       if (onUpdateUsers) {
         onUpdateUsers(fetchedUsers);
       }
     } catch (err) {
-      console.error('Error al cargar vendedores desde Supabase:', err);
+      console.error('Error al cargar usuarios desde Supabase:', err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadSellersFromSupabase();
+    loadUsersFromSupabase();
   }, [currentUser?.organization_id]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -89,7 +98,7 @@ export default function VendedoresManager({
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(cleanEmail)) {
-      setErrorMsg('Por favor ingrese un correo electrónico válido (ej: vendedor@empresa.com).');
+      setErrorMsg('Por favor ingrese un correo electrónico válido (ej: usuario@empresa.com).');
       return;
     }
 
@@ -103,13 +112,14 @@ export default function VendedoresManager({
       return;
     }
 
-    const existsUsername = sellers.some(u => u.username.toLowerCase() === cleanUsername);
+    const allUsers = [...sellers, ...contadoras];
+    const existsUsername = allUsers.some(u => u.username.toLowerCase() === cleanUsername);
     if (existsUsername) {
       setErrorMsg('El nombre de usuario ya está registrado en la organización.');
       return;
     }
 
-    const existsEmail = sellers.some(u => u.email?.toLowerCase() === cleanEmail);
+    const existsEmail = allUsers.some(u => u.email?.toLowerCase() === cleanEmail);
     if (existsEmail) {
       setErrorMsg('El correo electrónico ya está registrado.');
       return;
@@ -121,18 +131,34 @@ export default function VendedoresManager({
       return;
     }
 
+    if (activeSubTab === 'contadora' && activeContadora) {
+      setErrorMsg('Esta organización ya tiene una CONTADORA activa.');
+      return;
+    }
+
     setLoading(true);
     try {
-      // Flujo de creación de vendedor en Supabase llamando a Edge Function create-user
-      const createdUser = await authService.createSeller({
-        email: cleanEmail,
-        password: rawPassword,
-        name: cleanName,
-        username: cleanUsername,
-        organization_id: orgId,
-      });
+      let createdUser: User;
+      if (activeSubTab === 'contadora') {
+        createdUser = await authService.createContadora({
+          email: cleanEmail,
+          password: rawPassword,
+          name: cleanName,
+          username: cleanUsername,
+          organization_id: orgId,
+        });
+        setSuccessMsg(`✅ Contadora ${cleanName} registrada exitosamente.`);
+      } else {
+        createdUser = await authService.createSeller({
+          email: cleanEmail,
+          password: rawPassword,
+          name: cleanName,
+          username: cleanUsername,
+          organization_id: orgId,
+        });
+        setSuccessMsg(`✅ Vendedor ${cleanName} registrado exitosamente.`);
+      }
 
-      setSuccessMsg(`✅ Vendedor ${cleanName} registrado exitosamente.`);
       setName('');
       setUsername('');
       setEmail('');
@@ -142,43 +168,44 @@ export default function VendedoresManager({
         onAddUser(createdUser);
       }
 
-      await loadSellersFromSupabase();
-
+      await loadUsersFromSupabase();
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Error al registrar vendedor en Supabase.');
+      setErrorMsg(err?.message || 'Error al registrar usuario en Supabase.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleArchive = async (seller: User) => {
-    if (!confirm('¿Desea archivar este vendedor?\nNo podrá iniciar sesión, pero todas sus operaciones permanecerán registradas.')) {
+  const handleArchive = async (user: User) => {
+    const isCont = (user.role || '').toUpperCase().includes('CONTAD');
+    const label = isCont ? 'esta contadora' : 'este vendedor';
+    if (!confirm(`¿Desea archivar ${label}?\nNo podrá iniciar sesión, pero los registros históricos permanecerán guardados.`)) {
       return;
     }
     setLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
     try {
-      const sellerId = seller.id || seller.username;
-      const ok = await authService.deleteSeller(sellerId);
+      const userId = user.id || user.username;
+      const ok = await authService.deleteSeller(userId);
       if (ok) {
-        setSuccessMsg('Vendedor archivado correctamente.');
-        if (onDeleteUser) onDeleteUser(seller.username);
-        await loadSellersFromSupabase();
+        setSuccessMsg(`${isCont ? 'Contadora' : 'Vendedor'} archivado correctamente.`);
+        if (onDeleteUser) onDeleteUser(user.username);
+        await loadUsersFromSupabase();
         setTimeout(() => setSuccessMsg(''), 4000);
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Error al archivar vendedor.');
+      setErrorMsg(err?.message || 'Error al archivar usuario.');
     } finally {
       setLoading(false);
     }
   };
 
-  const startEdit = (seller: User) => {
-    setEditingId(seller.id);
-    setEditName(seller.name);
-    setEditEmail(seller.email || '');
+  const startEdit = (user: User) => {
+    setEditingId(user.id);
+    setEditName(user.name);
+    setEditEmail(user.email || '');
   };
 
   const cancelEdit = () => {
@@ -187,7 +214,7 @@ export default function VendedoresManager({
     setEditEmail('');
   };
 
-  const saveEdit = async (seller: User) => {
+  const saveEdit = async (user: User) => {
     if (!editName.trim()) {
       setErrorMsg('El nombre no puede estar vacío.');
       return;
@@ -197,166 +224,221 @@ export default function VendedoresManager({
     setSuccessMsg('');
     try {
       const ok = await authService.updateSeller({
-        id: seller.id,
+        id: user.id,
         name: editName.trim(),
-        username: seller.username,
+        username: user.username,
         email: editEmail.trim().toLowerCase(),
-        active: seller.active !== false && seller.status === 'active',
+        active: user.active !== false && user.status === 'active',
       });
       if (ok) {
-        setSuccessMsg(`✅ Vendedor ${seller.username} actualizado correctamente.`);
+        setSuccessMsg(`✅ Usuario ${user.username} actualizado correctamente.`);
         cancelEdit();
-        await loadSellersFromSupabase();
+        await loadUsersFromSupabase();
         setTimeout(() => setSuccessMsg(''), 4000);
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Error al actualizar vendedor.');
+      setErrorMsg(err?.message || 'Error al actualizar usuario.');
     } finally {
       setLoading(false);
     }
   };
 
+  const displayedList = activeSubTab === 'contadora' ? contadoras : sellers;
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-extrabold text-white tracking-tight font-display">
-            Gestión de <span className="text-binance-yellow">Vendedores</span>
+            Gestión de <span className="text-binance-yellow">Equipo y Usuarios</span>
           </h1>
           <p className="text-xs text-binance-gray mt-1">
-            Cree y administre las cuentas de vendedores respaldadas en Supabase Auth y public.users.
+            Administre vendedores y contadora asignados automáticamente a su organización.
           </p>
         </div>
 
-        <button
-          onClick={loadSellersFromSupabase}
-          disabled={loading}
-          className="px-3 py-1.5 bg-binance-black border border-binance-border hover:border-binance-yellow/50 rounded-xl text-binance-gray hover:text-white text-xs flex items-center gap-1.5 transition-all cursor-pointer font-mono"
-          title="Refrescar lista desde Supabase"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-binance-yellow' : ''}`} />
-          <span>Refrescar</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {/* SUB-TABS */}
+          <div className="flex bg-binance-black p-1 rounded-xl border border-binance-border font-mono text-xs">
+            <button
+              onClick={() => { setActiveSubTab('vendedores'); setErrorMsg(''); setSuccessMsg(''); }}
+              className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeSubTab === 'vendedores'
+                  ? 'bg-binance-yellow text-binance-black shadow-md'
+                  : 'text-binance-gray hover:text-white'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Vendedores ({sellers.length})</span>
+            </button>
+            <button
+              onClick={() => { setActiveSubTab('contadora'); setErrorMsg(''); setSuccessMsg(''); }}
+              className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeSubTab === 'contadora'
+                  ? 'bg-purple-600 text-white shadow-md'
+                  : 'text-binance-gray hover:text-white'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Contadora {activeContadora ? '(Activa)' : '(0)'}</span>
+            </button>
+          </div>
+
+          <button
+            onClick={loadUsersFromSupabase}
+            disabled={loading}
+            className="px-3 py-2 bg-binance-black border border-binance-border hover:border-binance-yellow/50 rounded-xl text-binance-gray hover:text-white text-xs flex items-center gap-1.5 transition-all cursor-pointer font-mono"
+            title="Refrescar lista desde Supabase"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-binance-yellow' : ''}`} />
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Formulario de Registro */}
         <div className="lg:col-span-1 bg-binance-card border border-binance-border rounded-2xl p-6 shadow-xl space-y-5">
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
-            <Plus className="w-4 h-4 text-binance-yellow" /> Nuevo Vendedor
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
+              <Plus className="w-4 h-4 text-binance-yellow" />
+              {activeSubTab === 'contadora' ? 'Registrar Contadora' : 'Nuevo Vendedor'}
+            </h2>
+            {activeSubTab === 'contadora' && activeContadora && (
+              <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded text-[9px] font-extrabold uppercase font-mono">
+                CONTADORA ACTIVA
+              </span>
+            )}
+          </div>
+
+          {activeSubTab === 'contadora' && activeContadora && (
+            <div className="p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl space-y-2 text-xs font-mono text-purple-200">
+              <div className="flex items-center gap-2 font-bold text-purple-300">
+                <ShieldCheck className="w-4 h-4" />
+                <span>CONTADORA ACTIVA EN LA EMPRESA</span>
+              </div>
+              <p className="text-[11px] text-binance-gray">
+                Esta organización ya cuenta con una CONTADORA activa (<span className="text-white font-bold">{activeContadora.name}</span>). Solo se permite 1 contadora activa por organización.
+              </p>
+            </div>
+          )}
 
           {errorMsg && (
-            <div className="p-3 bg-binance-red/10 border border-binance-red/30 rounded-xl flex items-center gap-2 text-binance-red text-2xs">
+            <div className="p-3 bg-binance-red/10 border border-binance-red/30 rounded-xl flex items-center gap-2 text-binance-red text-2xs font-mono">
               <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
               <span>{errorMsg}</span>
             </div>
           )}
 
           {successMsg && (
-            <div className="p-3 bg-binance-green/10 border border-binance-green/30 rounded-xl flex items-center gap-2 text-binance-green text-2xs">
+            <div className="p-3 bg-binance-green/10 border border-binance-green/30 rounded-xl flex items-center gap-2 text-binance-green text-2xs font-mono">
               <UserCheck className="w-3.5 h-3.5 shrink-0" />
               <span>{successMsg}</span>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Campo 1: Nombre Completo */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
-                Nombre Completo (Ej: Juan Gómez) *
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Juan Gómez"
-                className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden"
-              />
-            </div>
-
-            {/* Campo 2: Usuario de Acceso */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
-                Usuario de Acceso (Ej: juan_p2p) *
-              </label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="juan_p2p"
-                className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden font-mono"
-              />
-            </div>
-
-            {/* Campo 3: Email (NUEVO CAMPO OBLIGATORIO) ubicado DEBAJO de Usuario */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
-                Correo Electrónico *
-              </label>
-              <div className="relative">
+          {!(activeSubTab === 'contadora' && activeContadora) && (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Campo 1: Nombre Completo */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
+                  Nombre Completo *
+                </label>
                 <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="vendedor@empresa.com"
-                  className="w-full px-4 py-2.5 pl-10 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden font-mono"
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={activeSubTab === 'contadora' ? 'Lic. María Fernández' : 'Juan Gómez'}
+                  className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden"
                 />
-                <Mail className="w-4 h-4 text-binance-gray absolute left-3.5 top-3" />
               </div>
-            </div>
 
-            {/* Campo 4: Contraseña */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
-                Contraseña *
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden font-mono"
-              />
-            </div>
+              {/* Campo 2: Usuario de Acceso */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
+                  Usuario de Acceso *
+                </label>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder={activeSubTab === 'contadora' ? 'maria_contable' : 'juan_p2p'}
+                  className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden font-mono"
+                />
+              </div>
 
-            {/* Campo 5: Rol / Permisos */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
-                Rol / Permisos
-              </label>
-              <select
-                value="VENDEDOR"
-                disabled
-                className="w-full px-4 py-2.5 bg-binance-black/60 border border-binance-border rounded-xl text-binance-green font-bold text-sm outline-hidden font-mono cursor-not-allowed opacity-90"
+              {/* Campo 3: Email */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
+                  Correo Electrónico *
+                </label>
+                <div className="relative">
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder={activeSubTab === 'contadora' ? 'contabilidad@empresa.com' : 'vendedor@empresa.com'}
+                    className="w-full px-4 py-2.5 pl-10 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden font-mono"
+                  />
+                  <Mail className="w-4 h-4 text-binance-gray absolute left-3.5 top-3" />
+                </div>
+              </div>
+
+              {/* Campo 4: Contraseña */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
+                  Contraseña *
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden font-mono"
+                />
+              </div>
+
+              {/* Campo 5: Rol / Permisos */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-binance-gray uppercase tracking-wider block">
+                  Rol Asignado
+                </label>
+                <div className="w-full px-4 py-2.5 bg-binance-black/60 border border-binance-border rounded-xl text-xs font-bold font-mono">
+                  {activeSubTab === 'contadora' ? (
+                    <span className="text-purple-300">CONTADORA (100% Solo Lectura de Cierres e Informes)</span>
+                  ) : (
+                    <span className="text-binance-green">VENDEDOR (Operador de Billeteras y Jornadas)</span>
+                  )}
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full py-3 font-extrabold rounded-xl transition-all font-mono text-sm shadow-md cursor-pointer tracking-wider disabled:opacity-50 flex justify-center items-center gap-2 ${
+                  activeSubTab === 'contadora'
+                    ? 'bg-purple-600 hover:bg-purple-500 text-white'
+                    : 'bg-binance-yellow hover:bg-binance-yellow/90 text-binance-black'
+                }`}
               >
-                <option value="VENDEDOR">VENDEDOR</option>
-              </select>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 bg-binance-yellow hover:bg-binance-yellow/90 text-binance-black font-extrabold rounded-xl transition-all font-mono text-sm shadow-md cursor-pointer tracking-wider disabled:opacity-50 flex justify-center items-center gap-2"
-            >
-              {loading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>REGISTRANDO EN SUPABASE...</span>
-                </>
-              ) : (
-                <span>REGISTRAR VENDEDOR</span>
-              )}
-            </button>
-          </form>
+                {loading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>REGISTRANDO...</span>
+                  </>
+                ) : (
+                  <span>{activeSubTab === 'contadora' ? 'REGISTRAR CONTADORA' : 'REGISTRAR VENDEDOR'}</span>
+                )}
+              </button>
+            </form>
+          )}
         </div>
 
-        {/* Listado de Vendedores desde Supabase */}
+        {/* Listado de Usuarios desde Supabase */}
         <div className="lg:col-span-2 bg-binance-card border border-binance-border rounded-2xl p-6 shadow-xl space-y-4">
           <div className="flex flex-wrap justify-between items-center gap-2">
             <h2 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
-              Vendedores {showArchived ? 'Registrados' : 'Activos'} en Supabase (
-              {sellers.filter((u) => (showArchived ? true : u.active !== false && u.status === 'active')).length}
+              {activeSubTab === 'contadora' ? 'Contadora de la Organización' : 'Vendedores'} {showArchived ? 'Registrados' : 'Activos'} (
+              {displayedList.filter((u) => (showArchived ? true : u.active !== false && u.status === 'active')).length}
               )
             </h2>
             <div className="flex items-center gap-4">
@@ -367,25 +449,28 @@ export default function VendedoresManager({
                   onChange={(e) => setShowArchived(e.target.checked)}
                   className="w-3.5 h-3.5 accent-binance-yellow rounded cursor-pointer"
                 />
-                <span>Mostrar vendedores archivados</span>
+                <span>Mostrar archivados</span>
               </label>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {sellers
+            {displayedList
               .filter((u) => (showArchived ? true : u.active !== false && u.status === 'active'))
               .map((u) => {
                 const isSelf = currentUser?.username === u.username;
                 const isEditing = editingId === u.id;
                 const isActive = u.active !== false && u.status === 'active';
+                const isCont = (u.role || '').toUpperCase().includes('CONTAD');
 
                 return (
                   <div
                     key={u.id || u.username}
                     className={`p-4 rounded-xl border flex flex-col justify-between gap-3 transition-colors ${
-                      isSelf 
-                        ? 'bg-binance-yellow/5 border-binance-yellow/40 premium-glow-yellow' 
+                      isCont
+                        ? 'bg-purple-900/10 border-purple-500/40'
+                        : isSelf
+                        ? 'bg-binance-yellow/5 border-binance-yellow/40 premium-glow-yellow'
                         : 'bg-binance-black/40 border-binance-border hover:border-binance-yellow/30'
                     }`}
                   >
@@ -414,8 +499,12 @@ export default function VendedoresManager({
                           </span>
                         </div>
 
-                        <span className="px-2 py-0.5 rounded text-[9px] font-extrabold tracking-widest uppercase font-mono bg-binance-green/10 text-binance-green border border-binance-green/20">
-                          {u.role || 'VENDEDOR'}
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold tracking-widest uppercase font-mono ${
+                          isCont
+                            ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                            : 'bg-binance-green/10 text-binance-green border border-binance-green/20'
+                        }`}>
+                          {u.role || (isCont ? 'CONTADORA' : 'VENDEDOR')}
                         </span>
                       </div>
 
@@ -479,7 +568,7 @@ export default function VendedoresManager({
                               <button
                                 onClick={() => handleArchive(u)}
                                 className="text-binance-red hover:text-red-400 p-1 bg-red-500/10 hover:bg-red-500/20 rounded-md transition-all cursor-pointer flex items-center gap-1 font-mono"
-                                title="Archivar vendedor"
+                                title="Archivar usuario"
                               >
                                 <Archive className="w-3.5 h-3.5" />
                                 <span>Archivar</span>
@@ -493,10 +582,18 @@ export default function VendedoresManager({
                 );
               })}
 
-            {sellers.length === 0 && !loading && (
+            {displayedList.length === 0 && !loading && (
               <div className="col-span-2 py-8 text-center text-binance-gray text-xs font-mono space-y-2">
-                <p>No se encontraron vendedores registrados en Supabase para esta organización.</p>
-                <p className="text-[10px] text-binance-yellow">Utilice el formulario para crear el primer vendedor.</p>
+                <p>
+                  {activeSubTab === 'contadora'
+                    ? 'No se ha registrado una Contadora para esta organización.'
+                    : 'No se encontraron vendedores registrados en Supabase para esta organización.'}
+                </p>
+                <p className="text-[10px] text-binance-yellow">
+                  {activeSubTab === 'contadora'
+                    ? 'Utilice el formulario de la izquierda para registrar a la Contadora.'
+                    : 'Utilice el formulario para crear el primer vendedor.'}
+                </p>
               </div>
             )}
           </div>

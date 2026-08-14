@@ -125,7 +125,21 @@ export interface Shift {
   organization_id?: string;
 }
 
-export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR';
+export interface CryptoAdminTransfer {
+  id: string;
+  vendorId: string;
+  vendorName: string;
+  fromExchangeId: string;
+  fromExchangeName: string;
+  amount: number;
+  asset: string;
+  status: string;
+  notes?: string;
+  organization_id?: string;
+  createdAt: string;
+}
+
+export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'VENDEDOR' | 'CONTADORA' | 'super_admin' | 'admin' | 'vendedor' | 'contadora';
 
 export interface User {
   id?: string;
@@ -152,5 +166,6 @@ export interface AppState {
   currentOperator: string;
   users: User[];
   currentUser: User | null;
+  cryptoAdminTransfers?: CryptoAdminTransfer[];
 }
 

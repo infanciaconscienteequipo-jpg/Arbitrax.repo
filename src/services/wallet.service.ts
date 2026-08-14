@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import { Wallet } from '../types';
+import { Wallet, CryptoAdminTransfer } from '../types';
 
 export const walletService = {
   async list(organizationId?: string): Promise<Wallet[]> {
@@ -29,72 +29,145 @@ export const walletService = {
   },
 
   async create(wallet: Wallet): Promise<Wallet> {
-    const dbWallet = mapWalletToDB(wallet);
-
-    try {
-      const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_wallet_create', {
-        p_name: wallet.name,
-        p_saldo_pesos: wallet.saldoPesos,
-        p_saldo_usdt: wallet.saldoUsdt,
-        p_color: wallet.color,
-        p_provider_type: wallet.providerType,
-        p_titular: wallet.titular,
-        p_vendor_id: wallet.vendorId,
-        p_organization_id: wallet.organization_id,
-      });
-      if (!rpcErr && rpcRes) {
-        return typeof rpcRes === 'object' ? mapWalletFromDB(rpcRes) : wallet;
-      }
-    } catch (err) {
-      console.warn('RPC rpc_wallet_create no disponible, realizando upsert directo.');
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_wallet_create', {
+      p_name: wallet.name,
+      p_saldo_pesos: wallet.saldoPesos,
+      p_saldo_usdt: wallet.saldoUsdt,
+      p_color: wallet.color,
+      p_provider_type: wallet.providerType,
+      p_titular: wallet.titular,
+      p_vendor_id: wallet.vendorId,
+      p_organization_id: wallet.organization_id,
+    });
+    if (rpcErr) {
+      console.error('Error in rpc_wallet_create:', rpcErr.message);
+      throw new Error(rpcErr.message || 'Error al crear billetera');
     }
-
-    const { error } = await supabase.from('wallets').upsert(dbWallet);
-    if (error) {
-      console.error('Error al crear billetera:', error.message);
-      throw error;
+    if (rpcRes) {
+      if (typeof rpcRes === 'object' && rpcRes !== null) {
+        return mapWalletFromDB(Array.isArray(rpcRes) ? rpcRes[0] : rpcRes);
+      }
+      if (typeof rpcRes === 'string') {
+        return { ...wallet, id: rpcRes };
+      }
     }
     return wallet;
   },
 
   async update(wallet: Wallet): Promise<Wallet> {
-    const dbWallet = mapWalletToDB(wallet);
-
-    try {
-      const { error: rpcErr } = await supabase.rpc('rpc_wallet_update', {
-        p_id: wallet.id,
-        p_name: wallet.name,
-        p_saldo_pesos: wallet.saldoPesos,
-        p_saldo_usdt: wallet.saldoUsdt,
-        p_blocked: wallet.blocked,
-      });
-      if (!rpcErr) {
-        return wallet;
-      }
-    } catch (err) {
-      console.warn('RPC rpc_wallet_update no disponible, realizando upsert directo.');
-    }
-
-    const { error } = await supabase.from('wallets').upsert(dbWallet);
-    if (error) {
-      console.error('Error al actualizar billetera:', error.message);
-      throw error;
+    const { error: rpcErr } = await supabase.rpc('rpc_wallet_update', {
+      p_id: wallet.id,
+      p_name: wallet.name,
+      p_saldo_pesos: wallet.saldoPesos,
+      p_saldo_usdt: wallet.saldoUsdt,
+      p_blocked: wallet.blocked,
+    });
+    if (rpcErr) {
+      console.error('Error in rpc_wallet_update:', rpcErr.message);
+      throw new Error(rpcErr.message || 'Error al actualizar billetera');
     }
     return wallet;
   },
 
-  async delete(id: string): Promise<boolean> {
+  async block(walletId: string, note: string = ''): Promise<boolean> {
     try {
-      const { error: rpcErr } = await supabase.rpc('rpc_wallet_delete', { p_id: id });
-      if (!rpcErr) return true;
+      const { data, error } = await supabase.rpc('rpc_block_wallet', {
+        p_wallet_id: walletId,
+        p_confirm: true,
+        p_note: note,
+      });
+      if (error) {
+        console.error('RPC rpc_block_wallet error:', error.message);
+        return false;
+      }
+      return true;
     } catch (err) {
-      console.warn('RPC rpc_wallet_delete no disponible, usando delete directo.');
-    }
-
-    const { error } = await supabase.from('wallets').delete().eq('id', id);
-    if (error) {
-      console.error('Error al eliminar billetera:', error.message);
+      console.error('Error llamando a rpc_block_wallet:', err);
       return false;
+    }
+  },
+
+  async unblock(walletId: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase.rpc('rpc_unblock_wallet', {
+        p_wallet_id: walletId,
+      });
+      if (error) {
+        console.error('RPC rpc_unblock_wallet error:', error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('Error llamando a rpc_unblock_wallet:', err);
+      return false;
+    }
+  },
+
+  async transferCryptoToAdmin(params: {
+    exchangeId: string;
+    amount: number;
+    asset?: string;
+    notes?: string;
+    vendorId?: string;
+    vendorName?: string;
+    organizationId?: string;
+  }): Promise<{ success: boolean; error?: string; remaining_balance?: number }> {
+    try {
+      const { data, error } = await supabase.rpc('rpc_transfer_crypto_to_admin', {
+        p_exchange_id: params.exchangeId,
+        p_amount: params.amount,
+        p_asset: params.asset || 'USDT',
+        p_notes: params.notes || '',
+      });
+
+      if (!error) {
+        return {
+          success: true,
+          remaining_balance: data?.remaining_balance,
+        };
+      }
+      return { success: false, error: error.message };
+    } catch (err: any) {
+      console.error('Error in rpc_transfer_crypto_to_admin:', err);
+      return { success: false, error: err?.message || 'Error al procesar transferencia' };
+    }
+  },
+
+  async listCryptoAdminTransfers(organizationId?: string): Promise<CryptoAdminTransfer[]> {
+    try {
+      let query = supabase.from('crypto_admin_transfers').select('*').order('created_at', { ascending: false });
+      if (organizationId) {
+        query = query.eq('organization_id', organizationId);
+      }
+      const { data, error } = await query;
+      if (error) {
+        console.warn('Error fetching crypto_admin_transfers:', error.message);
+        return [];
+      }
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        vendorId: row.vendor_id || '',
+        vendorName: row.vendor_name || 'Vendedor',
+        fromExchangeId: row.from_exchange_id || '',
+        fromExchangeName: row.from_exchange_name || 'Exchange',
+        amount: Number(row.amount || 0),
+        asset: row.asset || 'USDT',
+        status: row.status || 'COMPLETED',
+        notes: row.notes || '',
+        organization_id: row.organization_id,
+        createdAt: row.created_at || new Date().toISOString(),
+      }));
+    } catch (err) {
+      console.warn('Error in listCryptoAdminTransfers:', err);
+      return [];
+    }
+  },
+
+  async delete(id: string): Promise<boolean> {
+    const { error: rpcErr } = await supabase.rpc('rpc_wallet_delete', { p_id: id });
+    if (rpcErr) {
+      console.error('Error in rpc_wallet_delete:', rpcErr.message);
+      throw new Error(rpcErr.message || 'Error al eliminar billetera');
     }
     return true;
   },

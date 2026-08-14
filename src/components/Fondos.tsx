@@ -39,22 +39,33 @@ export default function Fondos({
   const [vendorFilter, setVendorFilter] = useState('all');
   const [searchPerson, setSearchPerson] = useState('');
 
+  const isVendedor = currentUser?.role === 'VENDEDOR';
+  const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
+  const isContadora = currentUser?.role === 'CONTADORA';
   const currentOrgId = currentUser?.organization_id || '';
 
-  // Unique vendors list
-  const uniqueVendors = Array.from(
-    new Set([
-      ...(users || []).map(u => u.name || u.username),
-      ...incomeExpenses.map(r => r.transferPerson).filter(Boolean),
-    ])
-  ).filter(Boolean);
+  // Unique vendors list (only for admin or contadora)
+  const uniqueVendors = isVendedor
+    ? []
+    : Array.from(
+        new Set([
+          ...(users || []).map(u => u.name || u.username),
+          ...incomeExpenses.map(r => r.transferPerson).filter(Boolean),
+        ])
+      ).filter(Boolean);
 
   // Filter records by org & user
   const records = incomeExpenses.filter(r => {
     if (r.organization_id && r.organization_id !== currentOrgId) return false;
     
-    // Vendor filter
-    if (vendorFilter !== 'all') {
+    // Vendor isolation
+    if (isVendedor && currentUser) {
+      const uName = currentUser.name?.toLowerCase() || '';
+      const uUsername = currentUser.username?.toLowerCase() || '';
+      const matchPerson = (r.transferPerson && uName && r.transferPerson.toLowerCase().includes(uName)) || (r.transferPerson && uUsername && r.transferPerson.toLowerCase().includes(uUsername));
+      const matchWallet = (r.walletOrExchangeName && uName && r.walletOrExchangeName.toLowerCase().includes(uName)) || (r.walletOrExchangeName && uUsername && r.walletOrExchangeName.toLowerCase().includes(uUsername));
+      if (!matchPerson && !matchWallet && r.transferPerson) return false;
+    } else if (vendorFilter !== 'all') {
       const vLower = vendorFilter.toLowerCase();
       const matchPerson = r.transferPerson?.toLowerCase().includes(vLower);
       const matchWallet = r.walletOrExchangeName?.toLowerCase().includes(vLower);
@@ -242,16 +253,18 @@ export default function Fondos({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <select
-            value={vendorFilter}
-            onChange={e => setVendorFilter(e.target.value)}
-            className="px-3 py-2.5 bg-binance-card border border-binance-yellow/50 rounded-xl text-xs text-amber-400 font-bold outline-hidden focus:border-binance-yellow cursor-pointer"
-          >
-            <option value="all">👤 Todos los Vendedores</option>
-            {uniqueVendors.map(v => (
-              <option key={v} value={v}>{v}</option>
-            ))}
-          </select>
+          {(isAdmin || isContadora) && uniqueVendors.length > 0 && (
+            <select
+              value={vendorFilter}
+              onChange={e => setVendorFilter(e.target.value)}
+              className="px-3 py-2.5 bg-binance-card border border-binance-yellow/50 rounded-xl text-xs text-amber-400 font-bold outline-hidden focus:border-binance-yellow cursor-pointer"
+            >
+              <option value="all">👤 Todos los Vendedores</option>
+              {uniqueVendors.map(v => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          )}
 
           <select
             value={timeFilter}

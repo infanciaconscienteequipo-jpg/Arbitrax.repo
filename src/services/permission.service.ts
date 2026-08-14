@@ -41,6 +41,15 @@ export const permissionService = {
   },
 
   /**
+   * Comprobar si el usuario es CONTADORA
+   */
+  isContadora(user?: User | null): boolean {
+    if (!user) return false;
+    const role = (user.role || '').toUpperCase();
+    return role === 'CONTADORA';
+  },
+
+  /**
    * Solo SUPER_ADMIN puede crear administradores
    */
   canCreateAdmin(user?: User | null): boolean {
@@ -71,7 +80,7 @@ export const permissionService = {
 
     if (this.isVendedor(user)) {
       if (!wallet) return false;
-      return wallet.organization_id === user.organization_id && (wallet.vendorId === user.id || !wallet.vendorId);
+      return wallet.organization_id === user.organization_id && wallet.vendorId === user.id;
     }
 
     return false;
