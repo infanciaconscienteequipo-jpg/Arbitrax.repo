@@ -70,37 +70,33 @@ export const walletService = {
   },
 
   async block(walletId: string, note: string = ''): Promise<boolean> {
-    try {
-      const { data, error } = await supabase.rpc('rpc_block_wallet', {
-        p_wallet_id: walletId,
-        p_confirm: true,
-        p_note: note,
-      });
-      if (error) {
-        console.error('RPC rpc_block_wallet error:', error.message);
-        return false;
-      }
-      return true;
-    } catch (err) {
-      console.error('Error llamando a rpc_block_wallet:', err);
-      return false;
+    const { data, error } = await supabase.rpc('rpc_block_wallet', {
+      p_wallet_id: walletId,
+      p_confirm: true,
+      p_note: note,
+    });
+    if (error) {
+      console.error('RPC rpc_block_wallet error:', error.message);
+      throw new Error(error.message || 'Error al bloquear billetera');
     }
+    if (data !== true) {
+      throw new Error('La billetera no pudo ser bloqueada.');
+    }
+    return true;
   },
 
   async unblock(walletId: string): Promise<boolean> {
-    try {
-      const { data, error } = await supabase.rpc('rpc_unblock_wallet', {
-        p_wallet_id: walletId,
-      });
-      if (error) {
-        console.error('RPC rpc_unblock_wallet error:', error.message);
-        return false;
-      }
-      return true;
-    } catch (err) {
-      console.error('Error llamando a rpc_unblock_wallet:', err);
-      return false;
+    const { data, error } = await supabase.rpc('rpc_unblock_wallet', {
+      p_wallet_id: walletId,
+    });
+    if (error) {
+      console.error('RPC rpc_unblock_wallet error:', error.message);
+      throw new Error(error.message || 'Error al desbloquear billetera');
     }
+    if (data !== true) {
+      throw new Error('La billetera no pudo ser desbloqueada.');
+    }
+    return true;
   },
 
   async transferCryptoToAdmin(params: {

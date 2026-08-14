@@ -21,7 +21,7 @@ interface ExchangesProps {
   exchanges: ExchangeAccount[];
   users: User[];
   currentUser: User | null;
-  onAddExchange: (exchange: Omit<ExchangeAccount, 'id'>) => void;
+  onAddExchange: (exchange: Omit<ExchangeAccount, 'id'>) => Promise<void> | void;
   onUpdateExchangeBalance?: (exchangeId: string, newBalance: number) => void;
   onDeleteExchange?: (id: string) => void;
   onTransferCryptoToAdmin?: (params: {
@@ -55,16 +55,18 @@ export default function Exchanges({
   const [name, setName] = useState('');
   const [balanceCrypto, setBalanceCrypto] = useState<number>(0);
   const [vendorId, setVendorId] = useState<string>('');
+  const [isCreatingExchange, setIsCreatingExchange] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
   const isAdmin = currentUser?.role === 'ADMIN' || isSuperAdmin;
   const isVendedor = currentUser?.role === 'VENDEDOR';
   const currentOrgId = currentUser?.organization_id || '';
 
-  // Available Vendors
-  const vendorsList = users.length > 0 ? users : Array.from(
-    new Set(exchanges.map(e => e.vendorName).filter(Boolean))
-  ).map((name, i) => ({ id: name, name, username: name, role: 'VENDEDOR' } as User));
+  // Available Vendors strictly from public.users
+  const vendorsList = users.filter(
+    u => u.active !== false && u.status === 'active' && ((u.role || '').toUpperCase() === 'VENDEDOR' || (u.role || '').toUpperCase() === 'SELLER')
+  );
 
   // Filter exchanges by org and vendor
   const filteredExchanges = exchanges.filter(ex => {
@@ -153,9 +155,14 @@ export default function Exchanges({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    setCreateError('');
+
+    if (!name.trim()) {
+      setCreateError('Por favor ingrese el nombre de la cuenta de Exchange.');
+      return;
+    }
 
     let assignedVendorId = vendorId;
     let assignedVendorName = '';
@@ -168,18 +175,27 @@ export default function Exchanges({
       assignedVendorName = vObj?.name || 'Asignado';
     }
 
-    onAddExchange({
-      name: name.trim(),
-      balanceCrypto: Number(balanceCrypto) || 0,
-      vendorId: assignedVendorId,
-      vendorName: assignedVendorName,
-      organization_id: currentOrgId,
-    });
+    setIsCreatingExchange(true);
+    try {
+      if (onAddExchange) {
+        await onAddExchange({
+          name: name.trim(),
+          balanceCrypto: Number(balanceCrypto) || 0,
+          vendorId: assignedVendorId || undefined,
+          vendorName: assignedVendorName || undefined,
+          organization_id: currentOrgId,
+        });
+      }
 
-    setName('');
-    setBalanceCrypto(0);
-    setVendorId('');
-    setShowAddModal(false);
+      setName('');
+      setBalanceCrypto(0);
+      setVendorId('');
+      setShowAddModal(false);
+    } catch (err: any) {
+      setCreateError(err?.message || 'Error al registrar la cuenta de Exchange en Supabase.');
+    } finally {
+      setIsCreatingExchange(false);
+    }
   };
 
   const formatMoney = (amount: number) => {
@@ -501,6 +517,13 @@ export default function Exchanges({
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+              {createError && (
+                <div className="p-2.5 bg-binance-red/20 border border-binance-red/40 rounded-xl text-binance-red text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span className="font-semibold">{createError}</span>
+                </div>
+              )}
+
               <div>
                 <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
                   Nombre de la Exchange *
@@ -550,9 +573,10 @@ export default function Exchanges({
 
               <button
                 type="submit"
-                className="w-full py-3 bg-binance-yellow text-binance-black font-extrabold rounded-xl uppercase tracking-wider text-xs shadow-md mt-2 cursor-pointer hover:bg-binance-yellow/90"
+                disabled={isCreatingExchange}
+                className="w-full py-3 bg-binance-yellow text-binance-black font-extrabold rounded-xl uppercase tracking-wider text-xs shadow-md mt-2 cursor-pointer hover:bg-binance-yellow/90 disabled:opacity-50"
               >
-                Crear Exchange
+                {isCreatingExchange ? 'Creando en Supabase...' : 'Crear Exchange'}
               </button>
             </form>
           </div>

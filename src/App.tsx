@@ -111,47 +111,50 @@ export default function App() {
     setCryptoTransfers(transfers);
   }, [authUser]);
 
-  // Cargar datos remotos desde Supabase
-  useEffect(() => {
+  const refreshData = useCallback(async () => {
     if (!authUser) return;
     if (authUser.role !== 'SUPER_ADMIN' && !authUser.organization_id) return;
 
     if (authUser.role === 'CONTADORA') {
-      // CONTADORA: strictly fetch shifts, users and organizations (NO wallets, exchanges, transactions, incomeExpenses)
-      Promise.all([
+      const [shifts, orgs] = await Promise.all([
         shiftService.list(authUser.organization_id || undefined),
         organizationService.list(),
-      ]).then(([shifts, orgs]) => {
-        setState(prev => ({
-          ...prev,
-          shifts,
-          organizations: orgs.length ? orgs : prev.organizations,
-          wallets: [],
-          exchanges: [],
-          transactions: [],
-          incomeExpenses: [],
-        }));
-      });
+      ]);
+      setState(prev => ({
+        ...prev,
+        shifts,
+        organizations: orgs.length ? orgs : prev.organizations,
+        wallets: [],
+        exchanges: [],
+        transactions: [],
+        incomeExpenses: [],
+      }));
       return;
     }
 
-    dashboardService.fetchAppState(authUser?.organization_id || undefined).then(remoteState => {
-      if (remoteState && Object.keys(remoteState).length > 0) {
-        setState(prev => ({
-          ...prev,
-          ...remoteState,
-          organizations: remoteState.organizations?.length ? remoteState.organizations : prev.organizations,
-          users: remoteState.users?.length ? remoteState.users : prev.users,
-          wallets: remoteState.wallets?.length ? remoteState.wallets : prev.wallets,
-          exchanges: remoteState.exchanges?.length ? remoteState.exchanges : prev.exchanges,
-        }));
-      }
-    });
+    const remoteState = await dashboardService.fetchAppState(authUser?.organization_id || undefined);
+    if (remoteState && Object.keys(remoteState).length > 0) {
+      setState(prev => ({
+        ...prev,
+        ...remoteState,
+        organizations: remoteState.organizations?.length ? remoteState.organizations : prev.organizations,
+        users: remoteState.users?.length ? remoteState.users : prev.users,
+        wallets: remoteState.wallets || [],
+        exchanges: remoteState.exchanges || [],
+        transactions: remoteState.transactions || [],
+        incomeExpenses: remoteState.incomeExpenses || [],
+      }));
+    }
 
-    if (isAdmin) {
+    if (authUser.role === 'ADMIN' || authUser.role === 'SUPER_ADMIN') {
       fetchCryptoTransfers();
     }
-  }, [authUser, isAdmin, fetchCryptoTransfers]);
+  }, [authUser, fetchCryptoTransfers]);
+
+  // Cargar datos remotos desde Supabase
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   const handleLogout = async () => {
     await authLogout();
@@ -192,7 +195,7 @@ export default function App() {
   };
 
   // Transaction Handler: Executes financial logic for COMPRA / VENTA
-  const handleAddTransaction = (txData: Omit<Transaction, 'id' | 'timestamp' | 'dateString' | 'timeString'>) => {
+  const handleAddTransaction = async (txData: Omit<Transaction, 'id' | 'timestamp' | 'dateString' | 'timeString'>) => {
     const now = new Date();
     const isoStr = now.toISOString();
     const dateStr = isoStr.split('T')[0];
@@ -208,68 +211,50 @@ export default function App() {
       organization_id: txData.organization_id || authOrg?.id || '',
     };
 
-    // Sync to Supabase via service
-    transactionService.sync(newTx);
-
-    setState(prev => {
-      // Update Wallets
-      const updatedWallets = prev.wallets.map(w => {
-        if (w.id === txData.walletId) {
-          let pesosChange = 0;
-          if (txData.type === 'compra') {
-            pesosChange = -txData.totalPesos;
-          } else if (txData.type === 'venta') {
-            pesosChange = txData.totalPesos;
-          } else if (txData.type === 'ingreso_fondos') {
-            pesosChange = txData.totalPesos;
-          } else if (txData.type === 'egreso_fondos') {
-            pesosChange = -txData.totalPesos;
-          }
-          const updatedW = {
-            ...w,
-            saldoPesos: Math.max(0, w.saldoPesos + pesosChange),
-          };
-          walletService.sync(updatedW);
-          return updatedW;
-        }
-        return w;
-      });
-
-      // Update Exchanges
-      const updatedExchanges = prev.exchanges.map(ex => {
-        if (ex.id === txData.walletId || ex.name.toLowerCase().includes('binance') || prev.exchanges.length === 1) {
-          let cryptoChange = 0;
-          if (txData.type === 'compra') {
-            cryptoChange = txData.quantity;
-          } else if (txData.type === 'venta') {
-            cryptoChange = -txData.quantity;
-          }
-          const updatedEx = {
-            ...ex,
-            balanceCrypto: Math.max(0, ex.balanceCrypto + cryptoChange),
-          };
-          exchangeService.sync(updatedEx);
-          return updatedEx;
-        }
-        return ex;
-      });
-
-      return {
-        ...prev,
-        wallets: updatedWallets,
-        exchanges: updatedExchanges,
-        transactions: [newTx, ...prev.transactions],
-      };
-    });
+    try {
+      if (txData.type === 'compra') {
+        await transactionService.buy({
+          crypto: txData.crypto,
+          quantity: txData.quantity,
+          unitPrice: txData.unitPrice,
+          totalPesos: txData.totalPesos,
+          walletId: txData.walletId,
+          walletName: txData.walletName,
+          operator: txData.operator,
+          supplier: txData.supplier,
+          notes: txData.notes,
+          shiftId: txData.shiftId || state.activeShiftId || undefined,
+          organization_id: txData.organization_id || authOrg?.id || '',
+        });
+      } else if (txData.type === 'venta') {
+        await transactionService.sell({
+          crypto: txData.crypto,
+          quantity: txData.quantity,
+          unitPrice: txData.unitPrice,
+          totalPesos: txData.totalPesos,
+          walletId: txData.walletId,
+          walletName: txData.walletName,
+          operator: txData.operator,
+          client: txData.client,
+          gain: txData.gain,
+          notes: txData.notes,
+          shiftId: txData.shiftId || state.activeShiftId || undefined,
+          organization_id: txData.organization_id || authOrg?.id || '',
+        });
+      } else {
+        await transactionService.sync(newTx);
+      }
+    } catch (err) {
+      console.error('Error al procesar transaccion:', err);
+      await transactionService.sync(newTx);
+    }
+    await refreshData();
   };
 
   // Exchanges Handlers
-  const handleAddExchange = (newEx: ExchangeAccount) => {
-    setState(prev => ({
-      ...prev,
-      exchanges: [...prev.exchanges, newEx],
-    }));
-    exchangeService.sync(newEx);
+  const handleAddExchange = async (newEx: Omit<ExchangeAccount, 'id'>) => {
+    await exchangeService.create(newEx as ExchangeAccount);
+    await refreshData();
   };
 
   const handleUpdateExchangeBalance = (exchangeId: string, newBalance: number) => {
@@ -287,47 +272,18 @@ export default function App() {
   };
 
   // Income / Expense Handlers
-  const handleAddIncomeExpense = (recordData: IncomeExpenseRecord) => {
+  const handleAddIncomeExpense = async (recordData: IncomeExpenseRecord) => {
     const record: IncomeExpenseRecord = {
       ...recordData,
       shiftId: recordData.shiftId || state.activeShiftId || undefined,
       organization_id: recordData.organization_id || authOrg?.id || '',
     };
-    dashboardService.syncIncomeExpense(record);
-
-    setState(prev => {
-      let updatedWallets = [...prev.wallets];
-      let updatedExchanges = [...prev.exchanges];
-
-      if (record.assetType === 'pesos') {
-        updatedWallets = updatedWallets.map(w => {
-          if (w.id === record.walletOrExchangeId) {
-            const delta = record.type === 'ingreso' ? record.amount : -record.amount;
-            const updatedW = { ...w, saldoPesos: Math.max(0, w.saldoPesos + delta) };
-            walletService.sync(updatedW);
-            return updatedW;
-          }
-          return w;
-        });
-      } else {
-        updatedExchanges = updatedExchanges.map(ex => {
-          if (ex.id === record.walletOrExchangeId) {
-            const delta = record.type === 'ingreso' ? record.amount : -record.amount;
-            const updatedEx = { ...ex, balanceCrypto: Math.max(0, ex.balanceCrypto + delta) };
-            exchangeService.sync(updatedEx);
-            return updatedEx;
-          }
-          return ex;
-        });
-      }
-
-      return {
-        ...prev,
-        wallets: updatedWallets,
-        exchanges: updatedExchanges,
-        incomeExpenses: [record, ...prev.incomeExpenses],
-      };
-    });
+    try {
+      await dashboardService.syncIncomeExpense(record);
+    } catch (err) {
+      console.error('Error al registrar fondo:', err);
+    }
+    await refreshData();
   };
 
   // Wallet Funding Handler
@@ -348,12 +304,16 @@ export default function App() {
     });
   };
 
-  const handleAddWallet = async (walletName: string, titular: string, initialBalancePesos: number) => {
+  const handleAddWallet = async (walletName: string, titular: string, initialBalancePesos: number, customVendorId?: string) => {
     const colors = ['blue', 'green', 'orange', 'purple', 'teal', 'cyan'];
     const randomColor = colors[state.wallets.length % colors.length];
     
-    // VENDEDOR: strictly assign own user ID
-    const vendorId = currentUser?.role === 'VENDEDOR' ? currentUser.id : (currentUser?.id || '');
+    // VENDEDOR: strictly assign own user ID; Admin can assign customVendorId
+    const vendorId = currentUser?.role === 'VENDEDOR' 
+      ? currentUser.id 
+      : (customVendorId || currentUser?.id || '');
+
+    const vendorObj = state.users.find(u => u.id === vendorId);
 
     const walletPayload: Wallet = {
       id: '',
@@ -363,22 +323,15 @@ export default function App() {
       color: randomColor,
       providerType: 'Billetera P2P',
       titular,
-      vendorId,
-      vendorName: currentUser?.name || currentUser?.username || '',
+      vendorId: vendorId || undefined,
+      vendorName: vendorObj?.name || currentUser?.name || currentUser?.username || '',
       organization_id: authOrg?.id || '',
       limitARS: 3000000,
       blocked: false,
     };
 
-    try {
-      const createdWallet = await walletService.create(walletPayload);
-      setState(prev => ({
-        ...prev,
-        wallets: [...prev.wallets, createdWallet],
-      }));
-    } catch (err: any) {
-      console.error('Error al crear billetera:', err);
-    }
+    await walletService.create(walletPayload);
+    await refreshData();
   };
 
   const handleUpdateWallet = (walletId: string, updates: Partial<Wallet>) => {
@@ -399,10 +352,7 @@ export default function App() {
   const handleBlockWallet = async (walletId: string, note: string) => {
     const success = await walletService.block(walletId, note);
     if (success) {
-      setState(prev => ({
-        ...prev,
-        wallets: prev.wallets.map(w => w.id === walletId ? { ...w, blocked: true } : w),
-      }));
+      await refreshData();
     }
     return success;
   };
@@ -410,10 +360,7 @@ export default function App() {
   const handleUnblockWallet = async (walletId: string) => {
     const success = await walletService.unblock(walletId);
     if (success) {
-      setState(prev => ({
-        ...prev,
-        wallets: prev.wallets.map(w => w.id === walletId ? { ...w, blocked: false } : w),
-      }));
+      await refreshData();
     }
     return success;
   };
@@ -433,20 +380,7 @@ export default function App() {
     });
 
     if (res.success) {
-      // Update exchange locally
-      if (typeof res.remaining_balance === 'number') {
-        handleUpdateExchangeBalance(params.exchangeId, res.remaining_balance);
-      } else {
-        setState(prev => ({
-          ...prev,
-          exchanges: prev.exchanges.map(ex =>
-            ex.id === params.exchangeId
-              ? { ...ex, balanceCrypto: Math.max(0, ex.balanceCrypto - params.amount) }
-              : ex
-          ),
-        }));
-      }
-      fetchCryptoTransfers();
+      await refreshData();
     }
     return res;
   };

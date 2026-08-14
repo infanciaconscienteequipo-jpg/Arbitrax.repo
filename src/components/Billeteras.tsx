@@ -14,7 +14,7 @@ interface BilleterasProps {
   currentUser?: User | null;
   activeShiftId: string | null;
   onFundWallet: (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => void;
-  onAddWallet: (name: string, titular: string, initialBalance: number) => void;
+  onAddWallet: (name: string, titular: string, initialBalance: number, vendorId?: string) => Promise<void> | void;
   onUpdateWallet?: (walletId: string, updates: Partial<Wallet>) => void;
   onBlockWallet?: (walletId: string, note: string) => Promise<boolean>;
   onUnblockWallet?: (walletId: string) => Promise<boolean>;
@@ -62,6 +62,8 @@ export default function Billeteras({
   const [newWalletName, setNewWalletName] = useState('');
   const [newWalletTitular, setNewWalletTitular] = useState('');
   const [newWalletInitialBalance, setNewWalletInitialBalance] = useState<number | ''>('');
+  const [newWalletVendorId, setNewWalletVendorId] = useState<string>('');
+  const [isCreatingWallet, setIsCreatingWallet] = useState(false);
   
   const [createErrorMsg, setCreateErrorMsg] = useState('');
   const [createSuccessMsg, setCreateSuccessMsg] = useState('');
@@ -116,16 +118,10 @@ export default function Billeteras({
     uniqueYears.push(new Date().getFullYear().toString());
   }
 
-  // Extract unique vendors for dropdown (only for admin)
-  const uniqueVendors = isVendedor
-    ? []
-    : Array.from(
-        new Set([
-          ...users.map(u => u.name || u.username),
-          ...wallets.map(w => w.titular).filter(Boolean),
-          ...transactions.map(t => t.operator).filter(Boolean),
-        ])
-      ).filter(Boolean);
+  // Active vendors list strictly from public.users
+  const activeVendorsList = users.filter(
+    u => u.active !== false && u.status === 'active' && ((u.role || '').toUpperCase() === 'VENDEDOR' || (u.role || '').toUpperCase() === 'SELLER')
+  );
 
   // Filter wallets by vendor/titular if selected
   const filteredWallets = wallets.filter(w => {
@@ -292,8 +288,10 @@ export default function Billeteras({
     }
   };
 
-  const handleCreateWalletSubmit = (e: React.FormEvent) => {
+  const handleCreateWalletSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCreateErrorMsg('');
+    setCreateSuccessMsg('');
 
     if (!newWalletName.trim()) {
       setCreateErrorMsg('Por favor ingrese el nombre de la billetera.');
@@ -311,17 +309,26 @@ export default function Billeteras({
       return;
     }
 
-    onAddWallet(newWalletName.trim(), newWalletTitular.trim(), initialBalance);
+    const assignedVendor = isVendedor ? (currentUser?.id || '') : (newWalletVendorId || undefined);
 
-    setCreateSuccessMsg(`✅ Billetera "${newWalletName.trim()}" creada con éxito.`);
-    setCreateErrorMsg('');
-    setNewWalletName('');
-    setNewWalletTitular('');
-    setNewWalletInitialBalance('');
-
-    setTimeout(() => {
-      setCreateSuccessMsg('');
-    }, 5000);
+    setIsCreatingWallet(true);
+    try {
+      if (onAddWallet) {
+        await onAddWallet(newWalletName.trim(), newWalletTitular.trim(), initialBalance, assignedVendor);
+      }
+      setCreateSuccessMsg(`✅ Billetera "${newWalletName.trim()}" creada con éxito.`);
+      setNewWalletName('');
+      setNewWalletTitular('');
+      setNewWalletInitialBalance('');
+      setNewWalletVendorId('');
+      setTimeout(() => {
+        setCreateSuccessMsg('');
+      }, 5000);
+    } catch (err: any) {
+      setCreateErrorMsg(err?.message || 'Error al crear la billetera en Supabase.');
+    } finally {
+      setIsCreatingWallet(false);
+    }
   };
 
   const selectedWalletObj = wallets.find(w => w.id === selectedWalletId);
@@ -419,8 +426,8 @@ export default function Billeteras({
                 className="px-3 py-1.5 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-amber-400 font-bold"
               >
                 <option value="all">👤 Todos los Vendedores</option>
-                {uniqueVendors.map(v => (
-                  <option key={v} value={v}>{v}</option>
+                {activeVendorsList.map(v => (
+                  <option key={v.id} value={v.id}>{v.name || v.username}</option>
                 ))}
               </select>
             </div>
@@ -700,6 +707,27 @@ export default function Billeteras({
               />
             </div>
 
+            {/* Asignar Vendedor (Solo visible para Administradores) */}
+            {isAdmin && activeVendorsList.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-binance-gray uppercase tracking-wider block">
+                  Asignar a Vendedor (Opcional)
+                </label>
+                <select
+                  value={newWalletVendorId}
+                  onChange={(e) => setNewWalletVendorId(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden text-white cursor-pointer"
+                >
+                  <option value="">General / Sin Asignar</option>
+                  {activeVendorsList.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name || v.username}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {createErrorMsg && (
               <div className="p-2.5 bg-binance-red/20 border border-binance-red/40 rounded-xl text-binance-red text-xs flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -716,9 +744,11 @@ export default function Billeteras({
 
             <button
               type="submit"
-              className="w-full flex items-center justify-center gap-2 py-3 px-4 font-extrabold rounded-xl transition-all text-xs cursor-pointer bg-binance-yellow hover:bg-binance-yellow/90 text-binance-black shadow-md premium-glow-yellow"
+              disabled={isCreatingWallet}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 font-extrabold rounded-xl transition-all text-xs cursor-pointer bg-binance-yellow hover:bg-binance-yellow/90 text-binance-black shadow-md premium-glow-yellow disabled:opacity-50"
             >
-              <Plus className="w-4 h-4 text-binance-black" /> Crear Billetera
+              <Plus className="w-4 h-4 text-binance-black" />
+              {isCreatingWallet ? 'Creando en Supabase...' : 'Crear Billetera'}
             </button>
           </form>
         </div>
