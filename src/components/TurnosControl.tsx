@@ -257,41 +257,61 @@ export default function TurnosControl({
     // Total Gains
     const totalGains = salesTxs.reduce((sum, t) => sum + (t.gain || 0), 0);
 
-    // Breakdown per Exchange for Purchases
-    const exchangePurchasesMap: {
+    // Breakdown per Exchange for Purchases and Sales
+    const exchangeBreakdownMap: {
       [key: string]: {
         exchangeName: string;
         operators: Set<string>;
-        totalUsdt: number;
-        totalPesos: number;
-        txCount: number;
-        txs: Transaction[];
+        buyCount: number;
+        buyUsdt: number;
+        buyPesos: number;
+        sellCount: number;
+        sellUsdt: number;
+        sellPesos: number;
+        gain: number;
+        buyTxs: Transaction[];
+        sellTxs: Transaction[];
       };
     } = {};
 
-    purchaseTxs.forEach(tx => {
+    shiftTxs.forEach(tx => {
+      if (tx.type !== 'compra' && tx.type !== 'venta') return;
       const exName = tx.walletName || 'Exchange Principal';
-      if (!exchangePurchasesMap[exName]) {
-        exchangePurchasesMap[exName] = {
+      if (!exchangeBreakdownMap[exName]) {
+        exchangeBreakdownMap[exName] = {
           exchangeName: exName,
           operators: new Set<string>(),
-          totalUsdt: 0,
-          totalPesos: 0,
-          txCount: 0,
-          txs: [],
+          buyCount: 0,
+          buyUsdt: 0,
+          buyPesos: 0,
+          sellCount: 0,
+          sellUsdt: 0,
+          sellPesos: 0,
+          gain: 0,
+          buyTxs: [],
+          sellTxs: [],
         };
       }
-      exchangePurchasesMap[exName].operators.add(tx.operator || shift.operatorName);
-      exchangePurchasesMap[exName].totalUsdt += tx.quantity;
-      exchangePurchasesMap[exName].totalPesos += tx.totalPesos;
-      exchangePurchasesMap[exName].txCount += 1;
-      exchangePurchasesMap[exName].txs.push(tx);
+      exchangeBreakdownMap[exName].operators.add(tx.operator || shift.operatorName);
+      if (tx.type === 'compra') {
+        exchangeBreakdownMap[exName].buyCount += 1;
+        exchangeBreakdownMap[exName].buyUsdt += tx.quantity;
+        exchangeBreakdownMap[exName].buyPesos += tx.totalPesos;
+        exchangeBreakdownMap[exName].buyTxs.push(tx);
+      } else if (tx.type === 'venta') {
+        exchangeBreakdownMap[exName].sellCount += 1;
+        exchangeBreakdownMap[exName].sellUsdt += tx.quantity;
+        exchangeBreakdownMap[exName].sellPesos += tx.totalPesos;
+        exchangeBreakdownMap[exName].gain += (tx.gain || 0);
+        exchangeBreakdownMap[exName].sellTxs.push(tx);
+      }
     });
 
-    const exchangePurchasesList = Object.values(exchangePurchasesMap).map(ex => ({
+    const exchangeBreakdownList = Object.values(exchangeBreakdownMap).map(ex => ({
       ...ex,
       operatorNames: Array.from(ex.operators).join(', '),
-      avgPrice: ex.totalUsdt > 0 ? ex.totalPesos / ex.totalUsdt : 0,
+      avgBuyPrice: ex.buyUsdt > 0 ? ex.buyPesos / ex.buyUsdt : 0,
+      avgSellPrice: ex.sellUsdt > 0 ? ex.sellPesos / ex.sellUsdt : 0,
     }));
 
     return {
@@ -311,7 +331,7 @@ export default function TurnosControl({
       totalPesosSales,
       avgSellPrice,
       totalGains,
-      exchangePurchasesList,
+      exchangeBreakdownList,
     };
   };
 
@@ -745,22 +765,23 @@ export default function TurnosControl({
                 </div>
               </div>
 
-              {/* SECCION 2: DETALLE POR EXCHANGE (COMPRAS COMPRADAS) */}
+              {/* SECCION 2: DETALLE POR EXCHANGE (COMPRAS, VENTAS Y PRECIOS PROMEDIO) */}
               <div className="bg-binance-black p-4 rounded-xl border border-binance-border space-y-4">
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center flex-wrap gap-2">
                   <h3 className="text-xs font-black text-binance-yellow uppercase tracking-wider flex items-center gap-2">
                     <Coins className="w-4 h-4 text-binance-yellow" />
-                    Detalle por Exchange: Compras y Precios Promedio
+                    Detalle por Exchange: Compras, Ventas y Precios Promedio
                   </h3>
-                  <span className="text-xs font-bold text-white">
-                    Total USDT Comprados: {formatNumber(modalDetails.totalUsdtBought, 2)} USDT
-                  </span>
+                  <div className="flex items-center gap-3 text-xs font-bold font-mono">
+                    <span className="text-binance-red">Compras: {formatNumber(modalDetails.totalUsdtBought, 2)} USDT</span>
+                    <span className="text-binance-green">Ventas: {formatNumber(modalDetails.totalUsdtSold, 2)} USDT</span>
+                  </div>
                 </div>
 
                 {/* Cards per Exchange */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {modalDetails.exchangePurchasesList.map(ex => (
-                    <div key={ex.exchangeName} className="bg-binance-card p-4 rounded-xl border border-binance-border space-y-2">
+                  {modalDetails.exchangeBreakdownList.map(ex => (
+                    <div key={ex.exchangeName} className="bg-binance-card p-4 rounded-xl border border-binance-border space-y-3">
                       <div className="flex justify-between items-start border-b border-binance-border/40 pb-2">
                         <div>
                           <h4 className="font-extrabold text-white text-sm flex items-center gap-1.5">
@@ -768,42 +789,86 @@ export default function TurnosControl({
                             {ex.exchangeName}
                           </h4>
                           <span className="text-[10px] text-binance-gray block">
-                            Comprador(es): <strong className="text-white">{ex.operatorNames}</strong>
+                            Operador(es): <strong className="text-white">{ex.operatorNames}</strong>
                           </span>
                         </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-binance-black text-binance-green border border-binance-green/30">
-                          {ex.txCount} compras
-                        </span>
+                        <div className="flex gap-1.5">
+                          {ex.buyCount > 0 && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-binance-black text-binance-red border border-binance-red/30">
+                              {ex.buyCount} compras
+                            </span>
+                          )}
+                          {ex.sellCount > 0 && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-binance-black text-binance-green border border-binance-green/30">
+                              {ex.sellCount} ventas
+                            </span>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2 text-xs pt-1">
-                        <div>
-                          <span className="text-[10px] text-binance-gray uppercase block">USDT Comprados</span>
-                          <span className="font-black text-binance-green">{formatNumber(ex.totalUsdt, 2)} USDT</span>
+                      {/* Compras Block */}
+                      <div className="bg-binance-black/60 p-2.5 rounded-lg border border-binance-border/60 space-y-1.5">
+                        <span className="text-[10px] font-extrabold text-binance-red uppercase tracking-wider block">
+                          🟢 Compras Realizadas
+                        </span>
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          <div>
+                            <span className="text-[10px] text-binance-gray uppercase block">Comprado</span>
+                            <span className="font-black text-binance-red">{formatNumber(ex.buyUsdt, 2)} USDT</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-binance-gray uppercase block">Promedio Compra</span>
+                            <span className="font-black text-binance-yellow">${formatNumber(ex.avgBuyPrice)}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[10px] text-binance-gray uppercase block">Total Invertido</span>
+                            <span className="font-black text-white">{formatMoney(ex.buyPesos)}</span>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-[10px] text-binance-gray uppercase block">Precio Promedio</span>
-                          <span className="font-black text-binance-yellow">${formatNumber(ex.avgPrice)}</span>
+                      </div>
+
+                      {/* Ventas Block */}
+                      <div className="bg-binance-black/60 p-2.5 rounded-lg border border-binance-border/60 space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-extrabold text-binance-green uppercase tracking-wider block">
+                            🔴 Ventas Realizadas
+                          </span>
+                          {ex.gain !== 0 && (
+                            <span className={`text-[10px] font-bold ${ex.gain >= 0 ? 'text-binance-green' : 'text-binance-red'}`}>
+                              Ganancia: {formatMoney(ex.gain)}
+                            </span>
+                          )}
                         </div>
-                        <div className="text-right">
-                          <span className="text-[10px] text-binance-gray uppercase block">Total Invertido</span>
-                          <span className="font-black text-white">{formatMoney(ex.totalPesos)}</span>
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          <div>
+                            <span className="text-[10px] text-binance-gray uppercase block">Vendido</span>
+                            <span className="font-black text-binance-green">{formatNumber(ex.sellUsdt, 2)} USDT</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-binance-gray uppercase block">Promedio Venta</span>
+                            <span className="font-black text-binance-yellow">${formatNumber(ex.avgSellPrice)}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[10px] text-binance-gray uppercase block">Total Recaudado</span>
+                            <span className="font-black text-white">{formatMoney(ex.sellPesos)}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
                   ))}
 
-                  {modalDetails.exchangePurchasesList.length === 0 && (
+                  {modalDetails.exchangeBreakdownList.length === 0 && (
                     <div className="col-span-2 p-6 text-center text-binance-gray italic text-xs bg-binance-card rounded-xl">
-                      No se registraron compras de USDT en exchanges durante esta jornada.
+                      No se registraron operaciones de compra o venta en exchanges durante esta jornada.
                     </div>
                   )}
                 </div>
 
                 {/* Table view of individual purchase transactions */}
                 {modalDetails.purchaseTxs.length > 0 && (
-                  <div className="pt-2">
-                    <span className="text-[11px] font-bold text-binance-gray block mb-2 uppercase">
+                  <div className="pt-2 space-y-1.5">
+                    <span className="text-[11px] font-bold text-binance-red block uppercase flex items-center gap-1.5">
+                      <ArrowDownLeft className="w-3.5 h-3.5" />
                       Desglose individual de transacciones de compra:
                     </span>
                     <div className="overflow-x-auto">
@@ -820,7 +885,47 @@ export default function TurnosControl({
                         </thead>
                         <tbody className="divide-y divide-binance-border/30">
                           {modalDetails.purchaseTxs.map((tx, idx) => (
-                            <tr key={tx.id ? `tx-${tx.id}` : `tx-idx-${idx}`} className="hover:bg-binance-card/50">
+                            <tr key={tx.id ? `tx-buy-${tx.id}` : `tx-buy-idx-${idx}`} className="hover:bg-binance-card/50">
+                              <td className="px-3 py-2 text-white font-mono">
+                                <span className="block font-bold text-white text-xs">{tx.dateString || safeFormatDate(tx.timestamp) || '—'}</span>
+                                <span className="text-[10px] text-binance-gray block font-mono">{tx.timeString || safeFormatTime(tx.timestamp)}</span>
+                              </td>
+                              <td className="px-3 py-2 font-bold text-white">{tx.operator}</td>
+                              <td className="px-3 py-2 text-binance-yellow font-bold">{tx.walletName}</td>
+                              <td className="px-3 py-2 text-right font-bold text-binance-red">{formatNumber(tx.quantity, 2)} USDT</td>
+                              <td className="px-3 py-2 text-right font-bold text-white">${formatNumber(tx.unitPrice)}</td>
+                              <td className="px-3 py-2 text-right font-black text-white">{formatMoney(tx.totalPesos)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Table view of individual sales transactions */}
+                {modalDetails.salesTxs.length > 0 && (
+                  <div className="pt-2 space-y-1.5">
+                    <span className="text-[11px] font-bold text-binance-green block uppercase flex items-center gap-1.5">
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                      Desglose individual de transacciones de venta:
+                    </span>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs text-binance-gray">
+                        <thead className="bg-binance-card text-binance-gray font-extrabold uppercase tracking-wider border-b border-binance-border">
+                          <tr>
+                            <th className="px-3 py-2">Fecha y Hora</th>
+                            <th className="px-3 py-2">Quién Vendió</th>
+                            <th className="px-3 py-2">Exchange / Billetera</th>
+                            <th className="px-3 py-2 text-right">Cantidad USDT</th>
+                            <th className="px-3 py-2 text-right">Precio Unitario</th>
+                            <th className="px-3 py-2 text-right">Total Pesos</th>
+                            <th className="px-3 py-2 text-right">Ganancia</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-binance-border/30">
+                          {modalDetails.salesTxs.map((tx, idx) => (
+                            <tr key={tx.id ? `tx-sell-${tx.id}` : `tx-sell-idx-${idx}`} className="hover:bg-binance-card/50">
                               <td className="px-3 py-2 text-white font-mono">
                                 <span className="block font-bold text-white text-xs">{tx.dateString || safeFormatDate(tx.timestamp) || '—'}</span>
                                 <span className="text-[10px] text-binance-gray block font-mono">{tx.timeString || safeFormatTime(tx.timestamp)}</span>
@@ -830,6 +935,9 @@ export default function TurnosControl({
                               <td className="px-3 py-2 text-right font-bold text-binance-green">{formatNumber(tx.quantity, 2)} USDT</td>
                               <td className="px-3 py-2 text-right font-bold text-white">${formatNumber(tx.unitPrice)}</td>
                               <td className="px-3 py-2 text-right font-black text-white">{formatMoney(tx.totalPesos)}</td>
+                              <td className={`px-3 py-2 text-right font-black ${(tx.gain || 0) >= 0 ? 'text-binance-green' : 'text-binance-red'}`}>
+                                {formatMoney(tx.gain || 0)}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
