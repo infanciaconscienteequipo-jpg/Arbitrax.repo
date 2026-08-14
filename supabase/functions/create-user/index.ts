@@ -6,11 +6,12 @@ function getCorsHeaders(req: Request) {
   const configuredOrigin = (Deno.env.get("ALLOWED_ORIGIN") || "").trim();
 
   const allowedOrigins = [
-    "https://arbitrax-repo.vercel.app",
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
-  ];
+  "https://arbitrax-flow.vercel.app",
+  "https://arbitrax-repo.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:3000",
+];
 
   if (configuredOrigin) {
     allowedOrigins.push(configuredOrigin);
