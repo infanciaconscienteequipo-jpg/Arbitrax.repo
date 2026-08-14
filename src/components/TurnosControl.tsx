@@ -60,12 +60,19 @@ export default function TurnosControl({
   const uniqueVendors = isVendedor
     ? []
     : Array.from(
-        new Set([
-          ...users.map(u => u.name || u.username),
-          ...shifts.map(s => s.operatorName),
-          ...transactions.map(t => t.operator),
-        ])
-      ).filter(Boolean);
+        new Set(
+          (users || [])
+            .filter(u => {
+              const r = (u.role || '').toUpperCase();
+              const isVendorRole = r === 'VENDEDOR' || (!r.includes('ADMIN') && !r.includes('CONTADOR') && !r.includes('SUPER'));
+              const isSameOrg = !currentUser?.organization_id || !u.organization_id || u.organization_id === currentUser.organization_id;
+              const isActive = u.active !== false && u.status !== 'disabled' && u.status !== 'suspended';
+              return isVendorRole && isSameOrg && isActive;
+            })
+            .map(u => u.name || u.username)
+            .filter(Boolean)
+        )
+      );
 
   const filteredShifts = shifts.filter(s => {
     if (isVendedor && currentUser) {
@@ -75,7 +82,11 @@ export default function TurnosControl({
         return false;
       }
     } else if (vendorFilter !== 'all') {
-      return s.operatorName?.toLowerCase().includes(vendorFilter.toLowerCase());
+      const targetUser = users.find(u => (u.name || u.username) === vendorFilter);
+      const nameMatch = s.operatorName?.toLowerCase().includes(vendorFilter.toLowerCase());
+      const userNameMatch = targetUser?.username && s.operatorName?.toLowerCase().includes(targetUser.username.toLowerCase());
+      const targetNameMatch = targetUser?.name && s.operatorName?.toLowerCase().includes(targetUser.name.toLowerCase());
+      return Boolean(nameMatch || userNameMatch || targetNameMatch);
     }
     return true;
   });

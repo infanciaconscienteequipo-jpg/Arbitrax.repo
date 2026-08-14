@@ -183,25 +183,7 @@ export default function App() {
     if (!authUser) return;
     if (authUser.role !== 'SUPER_ADMIN' && !authUser.organization_id) return;
 
-    if (authUser.role === 'CONTADORA') {
-      const remoteState = await dashboardService.fetchAppState(authUser.organization_id || undefined);
-      if (remoteState && Object.keys(remoteState).length > 0) {
-        setState(prev => ({
-          ...prev,
-          ...remoteState,
-          organizations: remoteState.organizations?.length ? remoteState.organizations : prev.organizations,
-          users: remoteState.users?.length ? remoteState.users : prev.users,
-          wallets: remoteState.wallets || [],
-          exchanges: remoteState.exchanges || [],
-          transactions: remoteState.transactions || [],
-          incomeExpenses: remoteState.incomeExpenses || [],
-          shifts: remoteState.shifts || [],
-        }));
-      }
-      return;
-    }
-
-    const remoteState = await dashboardService.fetchAppState(authUser?.organization_id || undefined);
+    const remoteState = await dashboardService.fetchAppState(authUser.organization_id || undefined);
     if (remoteState && Object.keys(remoteState).length > 0) {
       setState(prev => ({
         ...prev,
@@ -212,6 +194,7 @@ export default function App() {
         exchanges: remoteState.exchanges || [],
         transactions: remoteState.transactions || [],
         incomeExpenses: remoteState.incomeExpenses || [],
+        shifts: remoteState.shifts || [],
       }));
     }
 
