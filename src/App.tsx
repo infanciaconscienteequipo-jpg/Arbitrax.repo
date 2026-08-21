@@ -333,16 +333,57 @@ export default function App() {
       shiftId: recordData.shiftId || state.activeShiftId || undefined,
       organization_id: recordData.organization_id || authOrg?.id || '',
     };
+
+    // Si la operación en Fondos es sobre una billetera en pesos, actualizar su saldo real en Supabase
+    if (record.assetType === 'pesos' && record.walletOrExchangeId) {
+      const wallet = state.wallets.find(w => w.id === record.walletOrExchangeId);
+      if (wallet) {
+        if (currentUser?.role === 'VENDEDOR' && wallet.vendorId && wallet.vendorId !== currentUser.id) {
+          throw new Error('No está autorizado para operar esta billetera.');
+        }
+        const fundType = record.type === 'ingreso' ? 'ingreso_fondos' : 'egreso_fondos';
+        await walletService.fundWallet({
+          walletId: wallet.id,
+          amount: record.amount,
+          type: fundType,
+          organizationId: authOrg?.id || undefined,
+        });
+      }
+    }
+
     await dashboardService.syncIncomeExpense(record);
     await refreshData();
   };
 
   // Wallet Funding Handler
-  const handleFundWallet = (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => {
+  const handleFundWallet = async (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => {
     const wallet = state.wallets.find(w => w.id === walletId);
-    if (!wallet) return;
+    if (!wallet) {
+      throw new Error('Billetera no encontrada.');
+    }
 
-    handleAddTransaction({
+    if (currentUser?.role === 'VENDEDOR' && wallet.vendorId && wallet.vendorId !== currentUser.id) {
+      throw new Error('No está autorizado para operar esta billetera.');
+    }
+
+    if (wallet.blocked) {
+      throw new Error(`La billetera "${wallet.name}" está bloqueada.`);
+    }
+
+    if (type === 'egreso_fondos' && wallet.saldoPesos < amount) {
+      throw new Error(`Saldo insuficiente en pesos en ${wallet.name}.`);
+    }
+
+    // 1. Actualizar el saldo real de la billetera en Supabase
+    const updatedWallet = await walletService.fundWallet({
+      walletId,
+      amount,
+      type,
+      organizationId: authOrg?.id || undefined,
+    });
+
+    // 2. Registrar el movimiento en transacciones
+    await handleAddTransaction({
       type,
       crypto: 'ARS',
       quantity: 0,
@@ -350,9 +391,19 @@ export default function App() {
       totalPesos: amount,
       walletId,
       walletName: wallet.name,
-      operator: currentUser?.name || state.currentOperator || 'Manual Adjust',
+      operator: currentUser?.name || currentUser?.username || state.currentOperator || 'Manual Adjust',
       notes,
+      shiftId: state.activeShiftId || undefined,
+      organization_id: authOrg?.id || '',
+      sellerId: currentUser?.role === 'VENDEDOR' ? currentUser.id : (wallet.vendorId || undefined),
     });
+
+    // 3. Refrescar datos para sincronizar estado global
+    setState(prev => ({
+      ...prev,
+      wallets: prev.wallets.map(w => w.id === walletId ? { ...w, saldoPesos: updatedWallet.saldoPesos } : w),
+    }));
+    await refreshData();
   };
 
   const handleAddWallet = async (walletName: string, titular: string, initialBalancePesos: number, customVendorId?: string) => {

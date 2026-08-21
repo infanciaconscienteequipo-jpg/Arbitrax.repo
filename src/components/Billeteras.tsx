@@ -13,7 +13,7 @@ interface BilleterasProps {
   users?: User[];
   currentUser?: User | null;
   activeShiftId: string | null;
-  onFundWallet: (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => void;
+  onFundWallet: (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => Promise<void> | void;
   onAddWallet: (name: string, titular: string, initialBalance: number, vendorId?: string) => Promise<void> | void;
   onUpdateWallet?: (walletId: string, updates: Partial<Wallet>) => void;
   onBlockWallet?: (walletId: string, note: string) => Promise<boolean>;
@@ -42,6 +42,7 @@ export default function Billeteras({
   
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [isSubmittingFund, setIsSubmittingFund] = useState(false);
 
   // Blocking Modal State
   const [blockingWallet, setBlockingWallet] = useState<Wallet | null>(null);
@@ -345,7 +346,7 @@ export default function Billeteras({
     }).format(amount);
   };
 
-  const handleFundSubmit = (e: React.FormEvent) => {
+  const handleFundSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!activeShiftId) {
@@ -374,25 +375,33 @@ export default function Billeteras({
     }
 
     setErrorMsg('');
+    setSuccessMsg('');
     
     let baseNote = notes.trim() || `${operationType === 'ingreso_fondos' ? 'Ingreso' : 'Egreso'} manual de fondos`;
     if (comprobanteFile) {
       baseNote += ` | Comprobante: ${comprobanteFile.name}`;
     }
 
-    onFundWallet(
-      selectedWalletId, 
-      amountInput, 
-      operationType, 
-      baseNote
-    );
+    try {
+      setIsSubmittingFund(true);
+      await onFundWallet(
+        selectedWalletId, 
+        amountInput, 
+        operationType, 
+        baseNote
+      );
 
-    setSuccessMsg(`✅ Operación registrada con éxito. Se actualizó el saldo de ${selectedWalletObj?.name}.`);
-    setAmountInput('');
-    setNotes('');
-    setComprobanteFile(null);
+      setSuccessMsg(`✅ Operación registrada con éxito. Se actualizó el saldo de ${selectedWalletObj?.name}.`);
+      setAmountInput('');
+      setNotes('');
+      setComprobanteFile(null);
 
-    setTimeout(() => setSuccessMsg(''), 5000);
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Error al procesar la operación de fondos.');
+    } finally {
+      setIsSubmittingFund(false);
+    }
   };
 
   // Color mapping helper
@@ -908,14 +917,16 @@ export default function Billeteras({
 
             <button
               type="submit"
-              disabled={!activeShiftId || selectedWalletObj?.blocked}
+              disabled={!activeShiftId || selectedWalletObj?.blocked || isSubmittingFund}
               className={`w-full flex items-center justify-center gap-2 py-3 px-4 font-extrabold rounded-xl transition-all text-xs cursor-pointer ${
-                activeShiftId && !selectedWalletObj?.blocked
+                activeShiftId && !selectedWalletObj?.blocked && !isSubmittingFund
                   ? 'bg-white hover:bg-white/90 text-binance-black'
                   : 'bg-binance-border text-binance-gray cursor-not-allowed shadow-none'
               }`}
             >
-              {operationType === 'ingreso_fondos' ? 'Procesar Carga de Fondos' : 'Procesar Retiro de Fondos'}
+              {isSubmittingFund
+                ? 'Actualizando saldo en Supabase...'
+                : (operationType === 'ingreso_fondos' ? 'Procesar Carga de Fondos' : 'Procesar Retiro de Fondos')}
             </button>
           </form>
         </div>

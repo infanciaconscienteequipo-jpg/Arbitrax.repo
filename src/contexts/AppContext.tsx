@@ -184,7 +184,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const fundWallet = async (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => {
     const wallet = state.wallets.find(w => w.id === walletId);
-    if (!wallet) return;
+    if (!wallet) throw new Error('Billetera no encontrada.');
+
+    const updatedWallet = await walletService.fundWallet({
+      walletId,
+      amount,
+      type,
+      organizationId: orgId || authOrg?.id || undefined,
+    });
 
     await addTransaction({
       type,
@@ -198,6 +205,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       notes,
       organization_id: orgId || authOrg?.id || '',
     });
+
+    setState(prev => ({
+      ...prev,
+      wallets: prev.wallets.map(w => w.id === walletId ? { ...w, saldoPesos: updatedWallet.saldoPesos } : w),
+    }));
   };
 
   const addExchange = async (newEx: ExchangeAccount) => {

@@ -55,18 +55,87 @@ export const walletService = {
   },
 
   async update(wallet: Wallet): Promise<Wallet> {
-    const { error: rpcErr } = await supabase.rpc('rpc_wallet_update', {
-      p_id: wallet.id,
-      p_name: wallet.name,
-      p_saldo_pesos: wallet.saldoPesos,
-      p_saldo_usdt: wallet.saldoUsdt,
-      p_blocked: wallet.blocked,
-    });
-    if (rpcErr) {
-      console.error('Error in rpc_wallet_update:', rpcErr.message);
-      throw new Error(rpcErr.message || 'Error al actualizar billetera');
+    try {
+      const { error: rpcErr } = await supabase.rpc('rpc_wallet_update', {
+        p_id: wallet.id,
+        p_name: wallet.name,
+        p_saldo_pesos: wallet.saldoPesos,
+        p_saldo_usdt: wallet.saldoUsdt,
+        p_blocked: wallet.blocked,
+      });
+      if (!rpcErr) {
+        return wallet;
+      }
+      console.warn('RPC rpc_wallet_update no disponible o retornó error, intentando actualización directa:', rpcErr.message);
+    } catch (err) {
+      console.warn('RPC rpc_wallet_update catch error, usando fallback directo:', err);
+    }
+
+    const { error: directErr } = await supabase
+      .from('wallets')
+      .update({
+        name: wallet.name,
+        saldo_pesos: wallet.saldoPesos,
+        saldo_usdt: wallet.saldoUsdt,
+        blocked: wallet.blocked,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', wallet.id);
+
+    if (directErr) {
+      console.error('Error al actualizar billetera en Supabase:', directErr.message);
+      throw new Error(directErr.message || 'Error al actualizar billetera');
     }
     return wallet;
+  },
+
+  async fundWallet(params: {
+    walletId: string;
+    amount: number;
+    type: 'ingreso_fondos' | 'egreso_fondos';
+    organizationId?: string;
+  }): Promise<Wallet> {
+    if (typeof params.amount !== 'number' || isNaN(params.amount) || params.amount <= 0) {
+      throw new Error('El monto debe ser un número positivo.');
+    }
+
+    // 1. Obtener la billetera directamente de Supabase para tener el saldo real y actualizado
+    const { data: dbWallet, error: fetchErr } = await supabase
+      .from('wallets')
+      .select('*')
+      .eq('id', params.walletId)
+      .single();
+
+    if (fetchErr || !dbWallet) {
+      throw new Error('No se encontró la billetera seleccionada en Supabase.');
+    }
+
+    const currentWallet = mapWalletFromDB(dbWallet);
+
+    if (currentWallet.blocked) {
+      throw new Error(`La billetera "${currentWallet.name}" está bloqueada.`);
+    }
+
+    if (params.organizationId && currentWallet.organization_id && currentWallet.organization_id !== params.organizationId) {
+      throw new Error('No está autorizado para operar esta billetera.');
+    }
+
+    let newSaldoPesos = Number(currentWallet.saldoPesos || 0);
+    if (params.type === 'ingreso_fondos') {
+      newSaldoPesos = newSaldoPesos + Number(params.amount);
+    } else if (params.type === 'egreso_fondos') {
+      if (newSaldoPesos < params.amount) {
+        throw new Error(`Saldo insuficiente en pesos en ${currentWallet.name}. Saldo actual: $${newSaldoPesos.toLocaleString('es-AR')}`);
+      }
+      newSaldoPesos = newSaldoPesos - Number(params.amount);
+    }
+
+    const updatedWallet: Wallet = {
+      ...currentWallet,
+      saldoPesos: Math.max(0, newSaldoPesos),
+    };
+
+    return await this.update(updatedWallet);
   },
 
   async block(walletId: string, note: string = ''): Promise<boolean> {
