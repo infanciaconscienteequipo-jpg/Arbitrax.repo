@@ -29,49 +29,32 @@ export const transactionService = {
   },
 
   async updateTransaction(tx: Transaction): Promise<Transaction> {
-    // 1. Probar RPC rpc_transaction_update_v2
-    try {
-      const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_transaction_update_v2', {
-        p_id: tx.id,
-        p_type: tx.type,
-        p_timestamp: tx.timestamp || new Date().toISOString(),
-        p_crypto: tx.crypto || 'USDT',
-        p_quantity: tx.quantity,
-        p_unit_price: tx.unitPrice,
-        p_total_pesos: tx.totalPesos,
-        p_wallet_id: tx.walletId,
-        p_exchange_id: tx.exchangeId || null,
-        p_supplier: tx.supplier || null,
-        p_client: tx.client || null,
-        p_gain: tx.gain || 0,
-        p_commission_binance: tx.commissionBinance || 0,
-        p_notes: tx.notes || null,
-      });
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_transaction_update_v2', {
+      p_id: tx.id,
+      p_type: tx.type,
+      p_timestamp: tx.timestamp || new Date().toISOString(),
+      p_crypto: tx.crypto || 'USDT',
+      p_quantity: tx.quantity,
+      p_unit_price: tx.unitPrice,
+      p_total_pesos: tx.totalPesos,
+      p_wallet_id: tx.walletId,
+      p_exchange_id: tx.exchangeId || null,
+      p_supplier: tx.supplier || null,
+      p_client: tx.client || null,
+      p_gain: tx.gain || 0,
+      p_commission_binance: tx.commissionBinance || 0,
+      p_notes: tx.notes || null,
+    });
 
-      if (!rpcErr && rpcRes) {
-        return typeof rpcRes === 'object' ? mapTransactionFromDB(rpcRes) : tx;
-      }
-      if (rpcErr) {
-        console.warn('rpc_transaction_update_v2 returned error:', rpcErr.message);
-      }
-    } catch (err) {
-      console.warn('rpc_transaction_update_v2 fallback to direct update', err);
+    if (rpcErr) {
+      console.error('Error in rpc_transaction_update_v2:', rpcErr.message);
+      throw new Error(rpcErr.message || 'Error al actualizar la transacción.');
     }
 
-    // 2. Direct Supabase update fallback
-    const dbRow = mapTransactionToDB(tx);
-    const { data, error } = await supabase
-      .from('transactions')
-      .update(dbRow)
-      .eq('id', tx.id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error al actualizar transacción:', error.message);
-      throw new Error(error.message || 'No se pudo actualizar la transacción.');
+    if (rpcRes && typeof rpcRes === 'object') {
+      return mapTransactionFromDB(rpcRes);
     }
-    return mapTransactionFromDB(data);
+    return tx;
   },
 
   async fetchTransactionsPage(params: {
@@ -83,145 +66,64 @@ export const transactionService = {
     exchangeId?: string;
     sellerId?: string;
     crypto?: string;
-    organizationId?: string;
+    from?: string;
+    to?: string;
+    hourFrom?: string;
+    hourTo?: string;
   }): Promise<{ data: Transaction[]; totalCount: number; totalPages: number }> {
-    try {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('rpc_transactions_page_v2', {
-        p_page: params.page,
-        p_page_size: params.pageSize,
-        p_search: params.search || null,
-        p_type: params.type && params.type !== 'all' ? params.type : null,
-        p_wallet_id: params.walletId && params.walletId !== 'all' ? params.walletId : null,
-        p_exchange_id: params.exchangeId && params.exchangeId !== 'all' ? params.exchangeId : null,
-        p_seller_id: params.sellerId && params.sellerId !== 'all' ? params.sellerId : null,
-        p_crypto: params.crypto && params.crypto !== 'all' ? params.crypto : null,
-        p_organization_id: params.organizationId || null,
-      });
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('rpc_transactions_page_v2', {
+      p_page: params.page,
+      p_page_size: params.pageSize,
+      p_type: params.type && params.type !== 'all' ? params.type : null,
+      p_wallet_id: params.walletId && params.walletId !== 'all' ? params.walletId : null,
+      p_exchange_id: params.exchangeId && params.exchangeId !== 'all' ? params.exchangeId : null,
+      p_seller_id: params.sellerId && params.sellerId !== 'all' ? params.sellerId : null,
+      p_crypto: params.crypto && params.crypto !== 'all' ? params.crypto : null,
+      p_search: params.search || null,
+      p_from: params.from || null,
+      p_to: params.to || null,
+      p_hour_from: params.hourFrom || null,
+      p_hour_to: params.hourTo || null,
+    });
 
-      if (!rpcErr && rpcData && Array.isArray(rpcData.records)) {
-        return {
-          data: rpcData.records.map(mapTransactionFromDB),
-          totalCount: Number(rpcData.total_count || rpcData.totalCount || 0),
-          totalPages: Number(rpcData.total_pages || rpcData.totalPages || Math.ceil((rpcData.total_count || 0) / params.pageSize)),
-        };
-      }
-    } catch (err) {
-      // Fallback
+    if (rpcErr) {
+      console.error('Error in rpc_transactions_page_v2:', rpcErr.message);
+      throw new Error(rpcErr.message || 'Error al obtener página de transacciones');
     }
 
-    // Fallback: list with manual pagination
-    const all = await this.list(params.organizationId);
-    let filtered = all;
-
-    if (params.type && params.type !== 'all') {
-      filtered = filtered.filter(t => t.type === params.type);
-    }
-    if (params.walletId && params.walletId !== 'all') {
-      filtered = filtered.filter(t => t.walletId === params.walletId);
-    }
-    if (params.exchangeId && params.exchangeId !== 'all') {
-      filtered = filtered.filter(t => t.exchangeId === params.exchangeId);
-    }
-    if (params.sellerId && params.sellerId !== 'all') {
-      filtered = filtered.filter(t => t.sellerId === params.sellerId);
-    }
-    if (params.crypto && params.crypto !== 'all') {
-      filtered = filtered.filter(t => t.crypto.toLowerCase() === params.crypto!.toLowerCase());
-    }
-    if (params.search && params.search.trim()) {
-      const q = params.search.toLowerCase();
-      filtered = filtered.filter(t =>
-        (t.client && t.client.toLowerCase().includes(q)) ||
-        (t.supplier && t.supplier.toLowerCase().includes(q)) ||
-        (t.notes && t.notes.toLowerCase().includes(q)) ||
-        (t.operator && t.operator.toLowerCase().includes(q)) ||
-        (t.walletName && t.walletName.toLowerCase().includes(q))
-      );
-    }
-
-    const totalCount = filtered.length;
-    const totalPages = Math.max(1, Math.ceil(totalCount / params.pageSize));
-    const startIndex = (params.page - 1) * params.pageSize;
-    const paginated = filtered.slice(startIndex, startIndex + params.pageSize);
+    const records = Array.isArray(rpcData?.records) ? rpcData.records.map(mapTransactionFromDB) : [];
+    const totalCount = Number(rpcData?.total_count || rpcData?.totalCount || records.length || 0);
+    const totalPages = Number(rpcData?.total_pages || rpcData?.totalPages || Math.max(1, Math.ceil(totalCount / params.pageSize)));
 
     return {
-      data: paginated,
+      data: records,
       totalCount,
       totalPages,
     };
   },
 
   async updateIncomeExpense(record: IncomeExpenseRecord): Promise<IncomeExpenseRecord> {
-    // 1. Probar RPC rpc_income_expense_update_v2
-    try {
-      const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_income_expense_update_v2', {
-        p_id: record.id,
-        p_type: record.type,
-        p_asset_type: record.assetType,
-        p_wallet_or_exchange_id: record.walletOrExchangeId,
-        p_amount: record.amount,
-        p_transfer_person: record.transferPerson || null,
-        p_reason: record.reason || null,
-        p_proof_url: record.proofUrl || null,
-        p_notes: (record as any).notes || record.reason || null,
-        p_timestamp: record.timestamp || new Date().toISOString(),
-      });
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_income_expense_update_v2', {
+      p_id: record.id,
+      p_type: record.type,
+      p_asset_type: record.assetType,
+      p_wallet_or_exchange_id: record.walletOrExchangeId,
+      p_amount: record.amount,
+      p_timestamp: record.timestamp || new Date().toISOString(),
+      p_transfer_person: record.transferPerson || null,
+      p_reason: record.reason || null,
+      p_proof_url: record.proofUrl || null,
+    });
 
-      if (!rpcErr && rpcRes) {
-        return typeof rpcRes === 'object' ? rpcRes : record;
-      }
-      if (rpcErr) {
-        console.warn('rpc_income_expense_update_v2 error:', rpcErr.message);
-      }
-    } catch (err) {
-      console.warn('rpc_income_expense_update_v2 fallback to direct update', err);
+    if (rpcErr) {
+      console.error('Error in rpc_income_expense_update_v2:', rpcErr.message);
+      throw new Error(rpcErr.message || 'Error al actualizar el registro de fondos.');
     }
 
-    // 2. Direct Supabase update fallback
-    const dbRecord = {
-      type: record.type,
-      asset_type: record.assetType,
-      wallet_or_exchange_id: record.walletOrExchangeId,
-      wallet_or_exchange_name: record.walletOrExchangeName,
-      amount: record.amount,
-      transfer_person: record.transferPerson,
-      reason: record.reason,
-      proof_url: record.proofUrl || null,
-      date_string: record.dateString,
-      time_string: record.timeString,
-      operator: record.operator,
-      updated_at: new Date().toISOString(),
-    };
-
-    const { data, error } = await supabase
-      .from('income_expenses')
-      .update(dbRecord)
-      .eq('id', record.id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error al actualizar ingreso/egreso:', error.message);
-      throw new Error(error.message || 'No se pudo actualizar el registro de fondos.');
+    if (rpcRes && typeof rpcRes === 'object') {
+      return rpcRes;
     }
-    return {
-      id: data.id,
-      type: data.type,
-      assetType: data.asset_type || data.assetType || 'pesos',
-      walletOrExchangeId: data.wallet_or_exchange_id || data.walletOrExchangeId,
-      walletOrExchangeName: data.wallet_or_exchange_name || data.walletOrExchangeName,
-      timestamp: data.timestamp,
-      dateString: data.date_string || data.dateString,
-      timeString: data.time_string || data.timeString,
-      amount: Number(data.amount || 0),
-      transferPerson: data.transfer_person || data.transferPerson || '',
-      reason: data.reason || '',
-      proofUrl: data.proof_url || data.proofUrl,
-      operator: data.operator || '',
-      vendorId: data.vendor_id || data.vendorId,
-      organization_id: data.organization_id,
-      shiftId: data.shift_id || data.shiftId,
-    };
+    return record;
   },
 
   async buy(params: {

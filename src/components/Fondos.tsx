@@ -64,10 +64,14 @@ export default function Fondos({
   // Edit Income/Expense Modal State
   const [editingRecord, setEditingRecord] = useState<IncomeExpenseRecord | null>(null);
   const [editType, setEditType] = useState<'ingreso' | 'egreso'>('ingreso');
+  const [editAssetType, setEditAssetType] = useState<'pesos' | 'exchange'>('pesos');
   const [editAmount, setEditAmount] = useState<number | ''>('');
   const [editTargetId, setEditTargetId] = useState('');
   const [editTransferPerson, setEditTransferPerson] = useState('');
   const [editReason, setEditReason] = useState('');
+  const [editProofUrl, setEditProofUrl] = useState<string>('');
+  const [editSelectedFile, setEditSelectedFile] = useState<File | null>(null);
+  const [isUploadingEdit, setIsUploadingEdit] = useState(false);
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
@@ -156,10 +160,14 @@ export default function Fondos({
   const handleOpenEdit = (r: IncomeExpenseRecord) => {
     setEditingRecord(r);
     setEditType(r.type);
+    const initialAssetType = r.assetType || (wallets.some(w => w.id === r.walletOrExchangeId) ? 'pesos' : 'exchange');
+    setEditAssetType(initialAssetType);
     setEditAmount(r.amount);
     setEditTargetId(r.walletOrExchangeId || '');
     setEditTransferPerson(r.transferPerson || '');
     setEditReason(r.reason || '');
+    setEditProofUrl(r.proofUrl || '');
+    setEditSelectedFile(null);
     setEditError('');
     setEditSuccess('');
   };
@@ -174,18 +182,41 @@ export default function Fondos({
       return;
     }
 
+    if (!editTargetId) {
+      setEditError(editAssetType === 'pesos' ? 'Debe seleccionar una billetera.' : 'Debe seleccionar un Exchange.');
+      return;
+    }
+
+    let finalProofUrl = editProofUrl;
+    if (editSelectedFile) {
+      setIsUploadingEdit(true);
+      try {
+        const uploadRes = await storageService.uploadProof(editSelectedFile);
+        finalProofUrl = uploadRes.url;
+      } catch (uploadErr: any) {
+        setEditError('Error al subir comprobante: ' + (uploadErr.message || ''));
+        setIsUploadingEdit(false);
+        return;
+      }
+      setIsUploadingEdit(false);
+    }
+
     const walletObj = wallets.find(w => w.id === editTargetId);
     const exchangeObj = exchanges.find(ex => ex.id === editTargetId);
-    const targetName = walletObj ? walletObj.name : (exchangeObj ? exchangeObj.name : editingRecord.walletOrExchangeName);
+    const targetName = editAssetType === 'pesos'
+      ? (walletObj ? walletObj.name : editingRecord.walletOrExchangeName)
+      : (exchangeObj ? exchangeObj.name : editingRecord.walletOrExchangeName);
 
     const updated: IncomeExpenseRecord = {
       ...editingRecord,
       type: editType,
+      assetType: editAssetType,
       amount: numAmount,
-      walletOrExchangeId: editTargetId || editingRecord.walletOrExchangeId,
+      walletOrExchangeId: editTargetId,
       walletOrExchangeName: targetName,
       transferPerson: editTransferPerson.trim(),
       reason: editReason.trim(),
+      proofUrl: finalProofUrl || undefined,
     };
 
     setIsSubmittingEdit(true);
@@ -990,7 +1021,7 @@ export default function Fondos({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
-                    Tipo de Movimiento
+                    Tipo de Movimiento *
                   </label>
                   <select
                     value={editType}
@@ -1004,7 +1035,84 @@ export default function Fondos({
 
                 <div>
                   <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
-                    Monto ($ ARS / USDT) *
+                    Tipo de Activo *
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-binance-black border border-binance-border rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditAssetType('pesos');
+                        if (!wallets.some(w => w.id === editTargetId) && availableWallets.length > 0) {
+                          setEditTargetId(availableWallets[0].id);
+                        }
+                      }}
+                      className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        editAssetType === 'pesos'
+                          ? 'bg-binance-yellow text-binance-black shadow-xs'
+                          : 'text-binance-gray hover:text-white'
+                      }`}
+                    >
+                      💵 Pesos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditAssetType('exchange');
+                        if (!exchanges.some(ex => ex.id === editTargetId) && availableExchanges.length > 0) {
+                          setEditTargetId(availableExchanges[0].id);
+                        }
+                      }}
+                      className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        editAssetType === 'exchange'
+                          ? 'bg-binance-yellow text-binance-black shadow-xs'
+                          : 'text-binance-gray hover:text-white'
+                      }`}
+                    >
+                      🏦 Exchange
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                    {editAssetType === 'pesos' ? 'Billetera Destino ($ ARS) *' : 'Exchange Destino (USDT) *'}
+                  </label>
+                  {editAssetType === 'pesos' ? (
+                    <select
+                      value={editTargetId}
+                      onChange={e => setEditTargetId(e.target.value)}
+                      required
+                      className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-yellow outline-hidden cursor-pointer"
+                    >
+                      <option value="">Seleccione Billetera...</option>
+                      {availableWallets.map(w => (
+                        <option key={w.id} value={w.id}>
+                          {w.name} {w.titular ? `(${w.titular})` : ''} - ${w.saldoPesos.toLocaleString('es-AR')}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <select
+                      value={editTargetId}
+                      onChange={e => setEditTargetId(e.target.value)}
+                      required
+                      className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-yellow outline-hidden cursor-pointer"
+                    >
+                      <option value="">Seleccione Exchange...</option>
+                      {availableExchanges.map(ex => (
+                        <option key={ex.id} value={ex.id}>
+                          {ex.name} - {(ex.balanceCrypto || 0).toFixed(2)} USDT
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                    Monto ({editAssetType === 'pesos' ? '$ ARS' : 'USDT'}) *
                   </label>
                   <input
                     type="number"
@@ -1015,28 +1123,6 @@ export default function Fondos({
                     className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-white font-mono text-sm focus:border-binance-yellow outline-hidden"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
-                  Billetera / Exchange Destino
-                </label>
-                <select
-                  value={editTargetId}
-                  onChange={e => setEditTargetId(e.target.value)}
-                  className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-yellow outline-hidden cursor-pointer"
-                >
-                  <optgroup label="Billeteras en Pesos">
-                    {wallets.map(w => (
-                      <option key={w.id} value={w.id}>{w.name} ($ ARS)</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Exchanges Cripto">
-                    {exchanges.map(ex => (
-                      <option key={ex.id} value={ex.id}>{ex.name} (USDT)</option>
-                    ))}
-                  </optgroup>
-                </select>
               </div>
 
               <div>
@@ -1065,6 +1151,43 @@ export default function Fondos({
                 />
               </div>
 
+              <div>
+                <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                  Comprobante (Opcional)
+                </label>
+                {editProofUrl && !editSelectedFile && (
+                  <div className="mb-2 p-2 bg-binance-black border border-binance-border rounded-xl flex items-center justify-between">
+                    <span className="text-[11px] text-binance-green flex items-center gap-1.5 truncate">
+                      <ImageIcon className="w-3.5 h-3.5 shrink-0" />
+                      Comprobante actual adjunto
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={editProofUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-binance-yellow hover:underline text-[10px] font-bold flex items-center gap-1"
+                      >
+                        Ver <ExternalLink className="w-3 h-3" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setEditProofUrl('')}
+                        className="text-binance-red hover:underline text-[10px] cursor-pointer"
+                      >
+                        Quitar
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={e => setEditSelectedFile(e.target.files?.[0] || null)}
+                  className="w-full text-xs text-binance-gray file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-binance-border file:text-white hover:file:bg-binance-yellow hover:file:text-binance-black cursor-pointer"
+                />
+              </div>
+
               <div className="flex gap-3 pt-2">
                 <button
                   type="button"
@@ -1075,11 +1198,11 @@ export default function Fondos({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmittingEdit}
+                  disabled={isSubmittingEdit || isUploadingEdit}
                   className="flex-1 py-2.5 bg-binance-yellow hover:bg-binance-yellow/90 disabled:opacity-40 text-binance-black font-extrabold rounded-xl uppercase text-xs shadow-md cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
-                  {isSubmittingEdit ? 'Guardando...' : 'Guardar Cambios'}
+                  {isSubmittingEdit || isUploadingEdit ? 'Guardando...' : 'Guardar Cambios'}
                 </button>
               </div>
             </form>

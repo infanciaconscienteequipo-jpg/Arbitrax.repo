@@ -55,59 +55,30 @@ export const walletService = {
   },
 
   async update(wallet: Wallet): Promise<Wallet> {
-    try {
-      const { error: rpcV2Err } = await supabase.rpc('rpc_wallet_update_v2', {
-        p_wallet_id: wallet.id,
-        p_name: wallet.name,
-        p_saldo_pesos: wallet.saldoPesos,
-        p_saldo_usdt: wallet.saldoUsdt,
-        p_limit_ars: wallet.limitARS,
-        p_blocked: wallet.blocked,
-        p_titular: wallet.titular || null,
-        p_vendor_id: wallet.vendorId || null,
-      });
-      if (!rpcV2Err) {
-        return wallet;
-      }
-    } catch (err) {
-      // Continue to next fallback
+    const { error: rpcV2Err } = await supabase.rpc('rpc_wallet_update_v2', {
+      p_id: wallet.id,
+      p_name: wallet.name,
+      p_limit_ars: wallet.limitARS,
+      p_titular: wallet.titular || null,
+      p_color: wallet.color || null,
+      p_provider_type: wallet.providerType || null,
+    });
+
+    if (rpcV2Err) {
+      console.error('Error in rpc_wallet_update_v2:', rpcV2Err.message);
+      throw new Error(rpcV2Err.message || 'Error al actualizar billetera');
     }
 
-    try {
-      const { error: rpcErr } = await supabase.rpc('rpc_wallet_update', {
-        p_id: wallet.id,
-        p_name: wallet.name,
-        p_saldo_pesos: wallet.saldoPesos,
-        p_saldo_usdt: wallet.saldoUsdt,
-        p_blocked: wallet.blocked,
-      });
-      if (!rpcErr) {
-        return wallet;
-      }
-      console.warn('RPC rpc_wallet_update no disponible o retornó error, intentando actualización directa:', rpcErr.message);
-    } catch (err) {
-      console.warn('RPC rpc_wallet_update catch error, usando fallback directo:', err);
-    }
-
-    const { error: directErr } = await supabase
+    const { data: dbW, error: getErr } = await supabase
       .from('wallets')
-      .update({
-        name: wallet.name,
-        saldo_pesos: wallet.saldoPesos,
-        saldo_usdt: wallet.saldoUsdt,
-        limit_ars: wallet.limitARS,
-        blocked: wallet.blocked,
-        titular: wallet.titular,
-        vendor_id: wallet.vendorId,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', wallet.id);
+      .select('*')
+      .eq('id', wallet.id)
+      .single();
 
-    if (directErr) {
-      console.error('Error al actualizar billetera en Supabase:', directErr.message);
-      throw new Error(directErr.message || 'Error al actualizar billetera');
+    if (getErr || !dbW) {
+      throw new Error(getErr?.message || 'Error al consultar billetera actualizada');
     }
-    return wallet;
+    return mapWalletFromDB(dbW);
   },
 
   async updateWalletLimit(walletId: string, limitARS: number): Promise<Wallet> {
@@ -115,35 +86,26 @@ export const walletService = {
       throw new Error('El límite debe ser un monto válido mayor o igual a 0.');
     }
 
-    try {
-      const { error: rpcErr } = await supabase.rpc('rpc_wallet_update_v2', {
-        p_wallet_id: walletId,
-        p_limit_ars: limitARS,
-      });
-      if (!rpcErr) {
-        // Fetch updated wallet
-        const { data: dbW } = await supabase.from('wallets').select('*').eq('id', walletId).single();
-        if (dbW) return mapWalletFromDB(dbW);
-      }
-    } catch (err) {
-      console.warn('RPC rpc_wallet_update_v2 no disponible para límite, usando fallback directo');
+    const { error: rpcErr } = await supabase.rpc('rpc_wallet_update_v2', {
+      p_id: walletId,
+      p_limit_ars: limitARS,
+    });
+
+    if (rpcErr) {
+      console.error('Error in rpc_wallet_update_v2:', rpcErr.message);
+      throw new Error(rpcErr.message || 'No se pudo actualizar el límite.');
     }
 
-    const { data, error } = await supabase
+    const { data: dbW, error: getErr } = await supabase
       .from('wallets')
-      .update({
-        limit_ars: limitARS,
-        updated_at: new Date().toISOString(),
-      })
+      .select('*')
       .eq('id', walletId)
-      .select()
       .single();
 
-    if (error) {
-      console.error('Error al actualizar límite de billetera:', error.message);
-      throw new Error(error.message || 'No se pudo actualizar el límite.');
+    if (getErr || !dbW) {
+      throw new Error(getErr?.message || 'Error al consultar billetera actualizada');
     }
-    return mapWalletFromDB(data);
+    return mapWalletFromDB(dbW);
   },
 
   async transferBetweenWallets(params: {
@@ -395,49 +357,27 @@ export const walletService = {
   },
 
   async archiveWallet(id: string): Promise<boolean> {
-    try {
-      const { data, error } = await supabase.rpc('rpc_wallet_archive_v2', {
-        p_wallet_id: id,
-      });
-      if (!error && (data === true || (typeof data === 'object' && data?.success !== false))) {
-        return true;
-      }
-    } catch (err) {
-      console.warn('rpc_wallet_archive_v2 error, fallback to table update:', err);
-    }
-
-    const { error: directErr } = await supabase
+    const { error } = await supabase
       .from('wallets')
       .update({ archived: true, status: 'ARCHIVED', updated_at: new Date().toISOString() })
       .eq('id', id);
 
-    if (directErr) {
-      console.error('Error al archivar billetera:', directErr.message);
-      throw new Error(directErr.message || 'No se pudo archivar la billetera.');
+    if (error) {
+      console.error('Error al archivar billetera:', error.message);
+      throw new Error(error.message || 'No se pudo archivar la billetera.');
     }
     return true;
   },
 
   async unarchiveWallet(id: string): Promise<boolean> {
-    try {
-      const { data, error } = await supabase.rpc('rpc_wallet_unarchive_v2', {
-        p_wallet_id: id,
-      });
-      if (!error && (data === true || (typeof data === 'object' && data?.success !== false))) {
-        return true;
-      }
-    } catch (err) {
-      console.warn('rpc_wallet_unarchive_v2 error, fallback to table update:', err);
-    }
-
-    const { error: directErr } = await supabase
+    const { error } = await supabase
       .from('wallets')
       .update({ archived: false, status: 'ACTIVE', updated_at: new Date().toISOString() })
       .eq('id', id);
 
-    if (directErr) {
-      console.error('Error al desarchivar billetera:', directErr.message);
-      throw new Error(directErr.message || 'No se pudo desarchivar la billetera.');
+    if (error) {
+      console.error('Error al desarchivar billetera:', error.message);
+      throw new Error(error.message || 'No se pudo desarchivar la billetera.');
     }
     return true;
   },
