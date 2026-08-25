@@ -175,48 +175,51 @@ export const walletService = {
     amount: number;
     type: 'ingreso_fondos' | 'egreso_fondos';
     organizationId?: string;
+    notes?: string;
+    shiftId?: string;
   }): Promise<Wallet> {
     if (typeof params.amount !== 'number' || isNaN(params.amount) || params.amount <= 0) {
       throw new Error('El monto debe ser un número positivo.');
     }
 
-    // 1. Obtener la billetera directamente de Supabase para tener el saldo real y actualizado
-    const { data: dbWallet, error: fetchErr } = await supabase
+    const mappedType = params.type === 'ingreso_fondos' ? 'ingreso' : 'egreso';
+    const rpcParams = {
+      p_type: mappedType,
+      p_asset_type: 'pesos',
+      p_wallet_or_exchange_id: params.walletId,
+      p_amount: params.amount,
+      p_timestamp: new Date().toISOString(),
+      p_transfer_person: null,
+      p_reason: params.notes || (params.type === 'ingreso_fondos' ? 'Ingreso de fondos' : 'Egreso de fondos'),
+      p_proof_url: null,
+      p_shift_id: params.shiftId || null,
+    };
+
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_income_expense_create_v2', rpcParams);
+
+    console.error('[DIAGNOSTICO RPC] rpc_income_expense_create_v2 (fundWallet)', {
+      rpc: 'rpc_income_expense_create_v2',
+      parametros: rpcParams,
+      errorCompleto: rpcErr,
+      respuestaRecibida: rpcRes,
+    });
+
+    if (rpcErr) {
+      console.error('Error in rpc_income_expense_create_v2 (fundWallet):', rpcErr.message);
+      throw new Error(rpcErr.message || 'Error al procesar movimiento de fondos.');
+    }
+
+    const { data: dbW, error: getErr } = await supabase
       .from('wallets')
       .select('*')
       .eq('id', params.walletId)
       .single();
 
-    if (fetchErr || !dbWallet) {
-      throw new Error('No se encontró la billetera seleccionada en Supabase.');
+    if (getErr || !dbW) {
+      throw new Error(getErr?.message || 'Error al consultar billetera actualizada');
     }
 
-    const currentWallet = mapWalletFromDB(dbWallet);
-
-    if (currentWallet.blocked) {
-      throw new Error(`La billetera "${currentWallet.name}" está bloqueada.`);
-    }
-
-    if (params.organizationId && currentWallet.organization_id && currentWallet.organization_id !== params.organizationId) {
-      throw new Error('No está autorizado para operar esta billetera.');
-    }
-
-    let newSaldoPesos = Number(currentWallet.saldoPesos || 0);
-    if (params.type === 'ingreso_fondos') {
-      newSaldoPesos = newSaldoPesos + Number(params.amount);
-    } else if (params.type === 'egreso_fondos') {
-      if (newSaldoPesos < params.amount) {
-        throw new Error(`Saldo insuficiente en pesos en ${currentWallet.name}. Saldo actual: $${newSaldoPesos.toLocaleString('es-AR')}`);
-      }
-      newSaldoPesos = newSaldoPesos - Number(params.amount);
-    }
-
-    const updatedWallet: Wallet = {
-      ...currentWallet,
-      saldoPesos: Math.max(0, newSaldoPesos),
-    };
-
-    return await this.update(updatedWallet);
+    return mapWalletFromDB(dbW);
   },
 
   async block(walletId: string, note: string = ''): Promise<boolean> {

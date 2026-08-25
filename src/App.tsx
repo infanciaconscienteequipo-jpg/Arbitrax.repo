@@ -343,7 +343,7 @@ export default function App() {
     await refreshData();
   };
 
-  // Wallet Funding Handler
+  // Wallet Funding Handler (Ingreso / Egreso de Fondos en Billetera)
   const handleFundWallet = async (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => {
     const wallet = state.wallets.find(w => w.id === walletId);
     if (!wallet) {
@@ -362,35 +362,17 @@ export default function App() {
       throw new Error(`Saldo insuficiente en pesos en ${wallet.name}.`);
     }
 
-    // 1. Actualizar el saldo real de la billetera en Supabase
-    const updatedWallet = await walletService.fundWallet({
-      walletId,
+    // Registrar el ingreso / egreso mediante la RPC oficial en Supabase que actualiza wallets.saldo_pesos
+    await transactionService.createIncomeExpense({
+      type: type === 'ingreso_fondos' ? 'ingreso' : 'egreso',
+      assetType: 'pesos',
+      walletOrExchangeId: walletId,
       amount,
-      type,
-      organizationId: authOrg?.id || undefined,
-    });
-
-    // 2. Registrar el movimiento en transacciones
-    await handleAddTransaction({
-      type,
-      crypto: 'ARS',
-      quantity: 0,
-      unitPrice: 1,
-      totalPesos: amount,
-      walletId,
-      walletName: wallet.name,
-      operator: currentUser?.name || currentUser?.username || state.currentOperator || 'Manual Adjust',
-      notes,
+      timestamp: new Date().toISOString(),
+      reason: notes || (type === 'ingreso_fondos' ? 'Ingreso manual de fondos' : 'Egreso manual de fondos'),
       shiftId: state.activeShiftId || undefined,
-      organization_id: authOrg?.id || '',
-      sellerId: currentUser?.role === 'VENDEDOR' ? currentUser.id : (wallet.vendorId || undefined),
     });
 
-    // 3. Refrescar datos para sincronizar estado global
-    setState(prev => ({
-      ...prev,
-      wallets: prev.wallets.map(w => w.id === walletId ? { ...w, saldoPesos: updatedWallet.saldoPesos } : w),
-    }));
     await refreshData();
   };
 

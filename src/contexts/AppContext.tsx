@@ -186,30 +186,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const wallet = state.wallets.find(w => w.id === walletId);
     if (!wallet) throw new Error('Billetera no encontrada.');
 
-    const updatedWallet = await walletService.fundWallet({
-      walletId,
+    await transactionService.createIncomeExpense({
+      type: type === 'ingreso_fondos' ? 'ingreso' : 'egreso',
+      assetType: 'pesos',
+      walletOrExchangeId: walletId,
       amount,
-      type,
-      organizationId: orgId || authOrg?.id || undefined,
+      timestamp: new Date().toISOString(),
+      reason: notes || (type === 'ingreso_fondos' ? 'Ingreso manual de fondos' : 'Egreso manual de fondos'),
+      shiftId: state.activeShiftId || undefined,
     });
 
-    await addTransaction({
-      type,
-      crypto: 'ARS',
-      quantity: 0,
-      unitPrice: 1,
-      totalPesos: amount,
-      walletId,
-      walletName: wallet.name,
-      operator: authUser?.name || state.currentOperator || 'Manual Adjust',
-      notes,
-      organization_id: orgId || authOrg?.id || '',
-    });
-
-    setState(prev => ({
-      ...prev,
-      wallets: prev.wallets.map(w => w.id === walletId ? { ...w, saldoPesos: updatedWallet.saldoPesos } : w),
-    }));
+    await refreshState();
   };
 
   const addExchange = async (newEx: ExchangeAccount) => {
