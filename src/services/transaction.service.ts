@@ -29,41 +29,131 @@ export const transactionService = {
   },
 
   async updateTransaction(tx: Transaction): Promise<Transaction> {
-    const rpcParams = {
-      p_id: tx.id,
-      p_type: tx.type,
-      p_timestamp: tx.timestamp || new Date().toISOString(),
-      p_crypto: tx.crypto || 'USDT',
-      p_quantity: tx.quantity,
-      p_unit_price: tx.unitPrice,
-      p_total_pesos: tx.totalPesos,
-      p_wallet_id: tx.walletId,
-      p_exchange_id: tx.exchangeId || null,
-      p_supplier: tx.supplier || null,
-      p_client: tx.client || null,
-      p_gain: tx.gain || 0,
-      p_commission_binance: tx.commissionBinance || 0,
-      p_notes: tx.notes || null,
-    };
+    // 1. Obtener la transacción original de Supabase para calcular la diferencia financiera exacta
+    const { data: dbOldTx, error: fetchErr } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('id', tx.id)
+      .single();
 
-    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_transaction_update_v2', rpcParams);
-
-    console.error('[DIAGNOSTICO RPC] rpc_transaction_update_v2', {
-      rpc: 'rpc_transaction_update_v2',
-      parametros: rpcParams,
-      errorCompleto: rpcErr,
-      respuestaRecibida: rpcRes,
-    });
-
-    if (rpcErr) {
-      console.error('Error in rpc_transaction_update_v2:', rpcErr.message);
-      throw new Error(rpcErr.message || 'Error al actualizar la transacción.');
+    if (fetchErr || !dbOldTx) {
+      throw new Error(fetchErr?.message || 'No se encontró la transacción original.');
     }
 
-    if (rpcRes && typeof rpcRes === 'object') {
-      return mapTransactionFromDB(rpcRes);
+    const oldType = dbOldTx.type as 'compra' | 'venta';
+    const oldPesos = Number(dbOldTx.total_pesos || 0);
+    const oldQty = Number(dbOldTx.quantity || 0);
+    const oldWalletId = dbOldTx.wallet_id;
+    const oldExchangeId = dbOldTx.exchange_id || null;
+
+    const newType = tx.type;
+    const newPesos = Number(tx.totalPesos || 0);
+    const newQty = Number(tx.quantity || 0);
+    const newWalletId = tx.walletId;
+    const newExchangeId = tx.exchangeId || null;
+
+    // 2. Calcular los deltas para cada billetera (Pesos ARS)
+    const walletDeltas: Record<string, number> = {};
+
+    // Revertir efecto de la transacción anterior en la billetera vieja
+    if (oldWalletId) {
+      // Si fue compra, se descontaron pesos -> Al revertir se devuelven (+oldPesos)
+      // Si fue venta, se ingresaron pesos -> Al revertir se restan (-oldPesos)
+      const revertPesos = oldType === 'compra' ? oldPesos : -oldPesos;
+      walletDeltas[oldWalletId] = (walletDeltas[oldWalletId] || 0) + revertPesos;
     }
-    return tx;
+
+    // Aplicar efecto de la nueva transacción en la billetera nueva
+    if (newWalletId) {
+      // Si es compra, se descuentan pesos (-newPesos)
+      // Si es venta, se ingresan pesos (+newPesos)
+      const applyPesos = newType === 'compra' ? -newPesos : newPesos;
+      walletDeltas[newWalletId] = (walletDeltas[newWalletId] || 0) + applyPesos;
+    }
+
+    // 3. Calcular los deltas para cada exchange (Cripto)
+    const exchangeDeltas: Record<string, number> = {};
+
+    // Revertir efecto de la transacción anterior en el exchange viejo
+    if (oldExchangeId) {
+      // Si fue compra, se sumaron criptos al stock -> Al revertir se descuentan (-oldQty)
+      // Si fue venta, se restaron criptos del stock -> Al revertir se devuelven (+oldQty)
+      const revertCrypto = oldType === 'compra' ? -oldQty : oldQty;
+      exchangeDeltas[oldExchangeId] = (exchangeDeltas[oldExchangeId] || 0) + revertCrypto;
+    }
+
+    // Aplicar efecto de la nueva transacción en el exchange nuevo
+    if (newExchangeId) {
+      // Si es compra, se suman criptos al stock (+newQty)
+      // Si es venta, se descuentan criptos del stock (-newQty)
+      const applyCrypto = newType === 'compra' ? newQty : -newQty;
+      exchangeDeltas[newExchangeId] = (exchangeDeltas[newExchangeId] || 0) + applyCrypto;
+    }
+
+    // 4. Aplicar cambios a las billeteras en la base de datos
+    for (const [wId, delta] of Object.entries(walletDeltas)) {
+      if (delta === 0) continue;
+      const { data: wRow } = await supabase.from('wallets').select('saldo_pesos').eq('id', wId).single();
+      if (wRow) {
+        const currentBal = Number(wRow.saldo_pesos || 0);
+        const updatedBal = Math.max(0, currentBal + delta);
+        const { error: wErr } = await supabase
+          .from('wallets')
+          .update({ saldo_pesos: updatedBal, updated_at: new Date().toISOString() })
+          .eq('id', wId);
+        if (wErr) {
+          console.error(`Error actualizando saldo de billetera ${wId}:`, wErr.message);
+        }
+      }
+    }
+
+    // 5. Aplicar cambios a los exchanges en la base de datos
+    for (const [exId, delta] of Object.entries(exchangeDeltas)) {
+      if (delta === 0) continue;
+      const { data: exRow } = await supabase.from('exchange_accounts').select('balance_crypto').eq('id', exId).single();
+      if (exRow) {
+        const currentBal = Number(exRow.balance_crypto || 0);
+        const updatedBal = Math.max(0, currentBal + delta);
+        const { error: exErr } = await supabase
+          .from('exchange_accounts')
+          .update({ balance_crypto: updatedBal, updated_at: new Date().toISOString() })
+          .eq('id', exId);
+        if (exErr) {
+          console.error(`Error actualizando balance de exchange ${exId}:`, exErr.message);
+        }
+      }
+    }
+
+    // 6. Actualizar el registro en la tabla transactions
+    const { data: updatedTxRow, error: txUpdateErr } = await supabase
+      .from('transactions')
+      .update({
+        type: tx.type,
+        timestamp: tx.timestamp || dbOldTx.timestamp,
+        crypto: tx.crypto || 'USDT',
+        quantity: tx.quantity,
+        unit_price: tx.unitPrice,
+        total_pesos: tx.totalPesos,
+        wallet_id: tx.walletId,
+        wallet_name: tx.walletName,
+        exchange_id: tx.exchangeId || null,
+        supplier: tx.supplier || null,
+        client: tx.client || null,
+        gain: tx.gain || 0,
+        commission_binance: tx.commissionBinance || 0,
+        notes: tx.notes || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', tx.id)
+      .select()
+      .single();
+
+    if (txUpdateErr) {
+      console.error('Error in updateTransaction direct table update:', txUpdateErr.message);
+      throw new Error(txUpdateErr.message || 'Error al actualizar la transacción.');
+    }
+
+    return mapTransactionFromDB(updatedTxRow);
   },
 
   async fetchTransactionsPage(params: {
@@ -152,36 +242,111 @@ export const transactionService = {
   },
 
   async updateIncomeExpense(record: IncomeExpenseRecord): Promise<IncomeExpenseRecord> {
-    const rpcParams = {
-      p_id: record.id,
-      p_type: record.type,
-      p_asset_type: record.assetType,
-      p_wallet_or_exchange_id: record.walletOrExchangeId,
-      p_amount: record.amount,
-      p_timestamp: record.timestamp || new Date().toISOString(),
-      p_transfer_person: record.transferPerson || null,
-      p_reason: record.reason || null,
-      p_proof_url: record.proofUrl || null,
-    };
+    // 1. Obtener el registro de fondos original de Supabase
+    const { data: dbOldRec, error: fetchErr } = await supabase
+      .from('income_expenses')
+      .select('*')
+      .eq('id', record.id)
+      .single();
 
-    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_income_expense_update_v2', rpcParams);
-
-    console.error('[DIAGNOSTICO RPC] rpc_income_expense_update_v2', {
-      rpc: 'rpc_income_expense_update_v2',
-      parametros: rpcParams,
-      errorCompleto: rpcErr,
-      respuestaRecibida: rpcRes,
-    });
-
-    if (rpcErr) {
-      console.error('Error in rpc_income_expense_update_v2:', rpcErr.message);
-      throw new Error(rpcErr.message || 'Error al actualizar el registro de fondos.');
+    if (fetchErr || !dbOldRec) {
+      throw new Error(fetchErr?.message || 'No se encontró el registro de fondos original.');
     }
 
-    if (rpcRes && typeof rpcRes === 'object') {
-      return rpcRes;
+    const oldType = dbOldRec.type as 'ingreso' | 'egreso';
+    const oldAssetType = (dbOldRec.asset_type || 'pesos') as 'pesos' | 'exchange';
+    const oldTargetId = dbOldRec.wallet_or_exchange_id;
+    const oldAmount = Number(dbOldRec.amount || 0);
+
+    const newType = record.type;
+    const newAssetType = record.assetType || 'pesos';
+    const newTargetId = record.walletOrExchangeId;
+    const newAmount = Number(record.amount || 0);
+
+    // 2. Calcular los deltas para billeteras (pesos) y exchanges (cripto)
+    const walletDeltas: Record<string, number> = {};
+    const exchangeDeltas: Record<string, number> = {};
+
+    // Revertir efecto del registro anterior
+    if (oldTargetId) {
+      if (oldAssetType === 'pesos') {
+        // Si fue ingreso, se sumó dinero -> al revertir se resta (-oldAmount)
+        // Si fue egreso, se restó dinero -> al revertir se devuelve (+oldAmount)
+        const revert = oldType === 'ingreso' ? -oldAmount : oldAmount;
+        walletDeltas[oldTargetId] = (walletDeltas[oldTargetId] || 0) + revert;
+      } else {
+        const revert = oldType === 'ingreso' ? -oldAmount : oldAmount;
+        exchangeDeltas[oldTargetId] = (exchangeDeltas[oldTargetId] || 0) + revert;
+      }
     }
-    return record;
+
+    // Aplicar efecto del nuevo registro
+    if (newTargetId) {
+      if (newAssetType === 'pesos') {
+        // Si es ingreso, se suma dinero (+newAmount)
+        // Si es egreso, se resta dinero (-newAmount)
+        const apply = newType === 'ingreso' ? newAmount : -newAmount;
+        walletDeltas[newTargetId] = (walletDeltas[newTargetId] || 0) + apply;
+      } else {
+        const apply = newType === 'ingreso' ? newAmount : -newAmount;
+        exchangeDeltas[newTargetId] = (exchangeDeltas[newTargetId] || 0) + apply;
+      }
+    }
+
+    // 3. Aplicar cambios a las billeteras
+    for (const [wId, delta] of Object.entries(walletDeltas)) {
+      if (delta === 0) continue;
+      const { data: wRow } = await supabase.from('wallets').select('saldo_pesos').eq('id', wId).single();
+      if (wRow) {
+        const currentBal = Number(wRow.saldo_pesos || 0);
+        const updatedBal = Math.max(0, currentBal + delta);
+        const { error: wErr } = await supabase
+          .from('wallets')
+          .update({ saldo_pesos: updatedBal, updated_at: new Date().toISOString() })
+          .eq('id', wId);
+        if (wErr) console.error(`Error actualizando saldo de billetera ${wId}:`, wErr.message);
+      }
+    }
+
+    // 4. Aplicar cambios a los exchanges
+    for (const [exId, delta] of Object.entries(exchangeDeltas)) {
+      if (delta === 0) continue;
+      const { data: exRow } = await supabase.from('exchange_accounts').select('balance_crypto').eq('id', exId).single();
+      if (exRow) {
+        const currentBal = Number(exRow.balance_crypto || 0);
+        const updatedBal = Math.max(0, currentBal + delta);
+        const { error: exErr } = await supabase
+          .from('exchange_accounts')
+          .update({ balance_crypto: updatedBal, updated_at: new Date().toISOString() })
+          .eq('id', exId);
+        if (exErr) console.error(`Error actualizando balance de exchange ${exId}:`, exErr.message);
+      }
+    }
+
+    // 5. Actualizar la fila en income_expenses
+    const { data: updatedRec, error: recErr } = await supabase
+      .from('income_expenses')
+      .update({
+        type: record.type,
+        asset_type: record.assetType,
+        wallet_or_exchange_id: record.walletOrExchangeId,
+        wallet_or_exchange_name: record.walletOrExchangeName,
+        amount: record.amount,
+        transfer_person: record.transferPerson || null,
+        reason: record.reason || null,
+        proof_url: record.proofUrl || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', record.id)
+      .select()
+      .single();
+
+    if (recErr) {
+      console.error('Error al actualizar registro de fondos:', recErr.message);
+      throw new Error(recErr.message || 'Error al actualizar el registro de fondos.');
+    }
+
+    return updatedRec || record;
   },
 
   async buy(params: {

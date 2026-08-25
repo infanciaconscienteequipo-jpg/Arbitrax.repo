@@ -41,6 +41,7 @@ export default function Movimientos({
   const [editType, setEditType] = useState<'compra' | 'venta' | 'ingreso_fondos' | 'egreso_fondos'>('compra');
   const [editTotalPesos, setEditTotalPesos] = useState<number | ''>('');
   const [editCryptoQty, setEditCryptoQty] = useState<number | ''>('');
+  const [editCrypto, setEditCrypto] = useState('USDT');
   const [editWalletId, setEditWalletId] = useState('');
   const [editExchangeId, setEditExchangeId] = useState('');
   const [editNotes, setEditNotes] = useState('');
@@ -310,9 +311,16 @@ export default function Movimientos({
     setEditType(tx.type);
     setEditTotalPesos(tx.totalPesos);
     setEditCryptoQty(tx.quantity);
+    setEditCrypto(tx.crypto || 'USDT');
     setEditWalletId(tx.walletId || '');
     setEditExchangeId(tx.exchangeId || '');
-    setEditNotes(tx.notes || '');
+    // Limpiar tags repetidos de notas automáticas previas
+    const cleanNotes = (tx.notes || '')
+      .split('|')
+      .filter(part => !part.trim().toLowerCase().startsWith('exchange:'))
+      .join('|')
+      .trim();
+    setEditNotes(cleanNotes);
     setEditClientOrSupplier(tx.client || tx.supplier || '');
     setEditError('');
     setEditSuccess('');
@@ -340,10 +348,12 @@ export default function Movimientos({
 
     const targetWalletId = editWalletId !== undefined && editWalletId !== '' ? editWalletId : editingTx.walletId;
     const targetExchangeId = editExchangeId !== undefined ? (editExchangeId.trim() === '' ? undefined : editExchangeId.trim()) : editingTx.exchangeId;
+    const finalCrypto = editCrypto.trim().toUpperCase() || 'USDT';
 
     const updated: Transaction = {
       ...editingTx,
       type: editType,
+      crypto: finalCrypto,
       totalPesos: numPesos,
       quantity: numCrypto,
       unitPrice: calculatedPrice,
@@ -362,7 +372,7 @@ export default function Movimientos({
     try {
       const res = await onUpdateTransaction(updated);
       if (res.success) {
-        setEditSuccess('✅ Movimiento actualizado exitosamente.');
+        setEditSuccess('✅ Movimiento y balances actualizados exitosamente.');
         setTimeout(() => {
           setEditingTx(null);
           setEditSuccess('');
@@ -951,7 +961,7 @@ export default function Movimientos({
                   <h3 className="font-extrabold text-white text-base font-display">
                     Editar Movimiento P2P
                   </h3>
-                  <span className="text-[10px] text-binance-gray">Actualización financiera vía RPC v2</span>
+                  <span className="text-[10px] text-binance-gray">Reconciliación y ajuste automático de saldos y exchanges</span>
                 </div>
               </div>
               <button
@@ -999,7 +1009,7 @@ export default function Movimientos({
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {/* Monto Pesos */}
                 <div className="space-y-1.5">
                   <label className="text-[10px] text-binance-gray uppercase font-bold block">
@@ -1018,7 +1028,7 @@ export default function Movimientos({
                 {/* Cantidad Cripto */}
                 <div className="space-y-1.5">
                   <label className="text-[10px] text-binance-gray uppercase font-bold block">
-                    Cantidad Cripto ({editingTx.crypto || 'USDT'}) *
+                    Cantidad Cripto *
                   </label>
                   <input
                     type="number"
@@ -1027,6 +1037,21 @@ export default function Movimientos({
                     value={editCryptoQty}
                     onChange={e => setEditCryptoQty(e.target.value === '' ? '' : parseFloat(e.target.value))}
                     className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-white font-mono text-sm focus:border-binance-yellow outline-hidden"
+                  />
+                </div>
+
+                {/* Cripto Ticker */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                    Cripto / Activo *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editCrypto}
+                    onChange={e => setEditCrypto(e.target.value.toUpperCase())}
+                    placeholder="USDT, SOL, BNB..."
+                    className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-white font-mono text-sm focus:border-binance-yellow outline-hidden uppercase"
                   />
                 </div>
               </div>
