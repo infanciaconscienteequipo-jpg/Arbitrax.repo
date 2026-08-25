@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { Wallet, Transaction, User } from '../types';
-import { Wallet as WalletIcon, Plus, Minus, ArrowUpRight, ArrowDownLeft, TrendingUp, DollarSign, WalletCards, Sparkles, CheckCircle2, AlertTriangle, Clock, SlidersHorizontal, Filter, Calendar, Lock, Unlock, Edit3, Save, X, Paperclip, FileText, Upload } from 'lucide-react';
+import { Wallet as WalletIcon, Plus, Minus, ArrowUpRight, ArrowDownLeft, TrendingUp, DollarSign, WalletCards, Sparkles, CheckCircle2, AlertTriangle, Clock, SlidersHorizontal, Filter, Calendar, Lock, Unlock, Edit3, Save, X, Paperclip, FileText, Upload, Archive, ArchiveRestore } from 'lucide-react';
 
 interface BilleterasProps {
   wallets: Wallet[];
@@ -20,6 +20,8 @@ interface BilleterasProps {
   onTransferBetweenWallets?: (params: { fromWalletId: string; toWalletId: string; amount: number; notes?: string }) => Promise<{ success: boolean; error?: string }>;
   onBlockWallet?: (walletId: string, note: string) => Promise<boolean>;
   onUnblockWallet?: (walletId: string) => Promise<boolean>;
+  onArchiveWallet?: (id: string) => Promise<{ success: boolean; error?: string }>;
+  onUnarchiveWallet?: (id: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export default function Billeteras({
@@ -35,9 +37,14 @@ export default function Billeteras({
   onTransferBetweenWallets,
   onBlockWallet,
   onUnblockWallet,
+  onArchiveWallet,
+  onUnarchiveWallet,
 }: BilleterasProps) {
   const isVendedor = currentUser?.role === 'VENDEDOR';
   const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
+  const [statusFilter, setStatusFilter] = useState<'active' | 'archived'>('active');
+  const [processingWalletId, setProcessingWalletId] = useState<string | null>(null);
+  const [archiveFeedback, setArchiveFeedback] = useState<{ id: string; msg: string; type: 'success' | 'error' } | null>(null);
   const [selectedWalletId, setSelectedWalletId] = useState('');
   const [amountInput, setAmountInput] = useState<number | ''>('');
   const [operationType, setOperationType] = useState<'ingreso_fondos' | 'egreso_fondos'>('ingreso_fondos');
@@ -138,8 +145,12 @@ export default function Billeteras({
     u => u.active !== false && u.status === 'active' && ((u.role || '').toUpperCase() === 'VENDEDOR' || (u.role || '').toUpperCase() === 'SELLER')
   );
 
-  // Filter wallets by vendor/titular if selected
+  // Filter wallets by vendor/titular and status/archive if selected
   const filteredWallets = wallets.filter(w => {
+    const isArchived = w.archived === true || w.status === 'ARCHIVED' || w.status === 'archived';
+    if (statusFilter === 'active' && isArchived) return false;
+    if (statusFilter === 'archived' && !isArchived) return false;
+
     if (isVendedor && currentUser) {
       if (!w.vendorId || w.vendorId !== currentUser.id) return false;
     } else if (vendorFilter !== 'all') {
@@ -151,6 +162,48 @@ export default function Billeteras({
     }
     return true;
   });
+
+  const activeWalletsCount = wallets.filter(w => !w.archived && w.status !== 'ARCHIVED' && w.status !== 'archived').length;
+  const archivedWalletsCount = wallets.filter(w => w.archived === true || w.status === 'ARCHIVED' || w.status === 'archived').length;
+  const activeWalletsOnly = wallets.filter(w => !w.archived && w.status !== 'ARCHIVED' && w.status !== 'archived');
+
+  const handleArchive = async (id: string) => {
+    if (!onArchiveWallet) return;
+    setProcessingWalletId(id);
+    setArchiveFeedback(null);
+    try {
+      const res = await onArchiveWallet(id);
+      if (res.success) {
+        setArchiveFeedback({ id, msg: 'Billetera archivada exitosamente.', type: 'success' });
+      } else {
+        setArchiveFeedback({ id, msg: res.error || 'Error al archivar la billetera.', type: 'error' });
+      }
+    } catch (err: any) {
+      setArchiveFeedback({ id, msg: err?.message || 'Error al procesar el archivado.', type: 'error' });
+    } finally {
+      setProcessingWalletId(null);
+      setTimeout(() => setArchiveFeedback(null), 3000);
+    }
+  };
+
+  const handleUnarchive = async (id: string) => {
+    if (!onUnarchiveWallet) return;
+    setProcessingWalletId(id);
+    setArchiveFeedback(null);
+    try {
+      const res = await onUnarchiveWallet(id);
+      if (res.success) {
+        setArchiveFeedback({ id, msg: 'Billetera desarchivada exitosamente.', type: 'success' });
+      } else {
+        setArchiveFeedback({ id, msg: res.error || 'Error al desarchivar la billetera.', type: 'error' });
+      }
+    } catch (err: any) {
+      setArchiveFeedback({ id, msg: err?.message || 'Error al procesar el desarchivado.', type: 'error' });
+    } finally {
+      setProcessingWalletId(null);
+      setTimeout(() => setArchiveFeedback(null), 3000);
+    }
+  };
 
   // Filtered transactions for bottom history table
   const filteredHistTxs = transactions.filter(t => {
@@ -237,10 +290,10 @@ export default function Billeteras({
 
   // Auto-select first wallet if none selected
   React.useEffect(() => {
-    if (wallets.length > 0 && !selectedWalletId) {
-      setSelectedWalletId(wallets[0].id);
+    if (activeWalletsOnly.length > 0 && (!selectedWalletId || !activeWalletsOnly.some(w => w.id === selectedWalletId))) {
+      setSelectedWalletId(activeWalletsOnly[0].id);
     }
-  }, [wallets, selectedWalletId]);
+  }, [activeWalletsOnly, selectedWalletId]);
 
   const handleStartEdit = (w: Wallet) => {
     setEditingWalletId(w.id);
@@ -250,23 +303,27 @@ export default function Billeteras({
   };
 
   const handleSaveEdit = async (walletId: string) => {
-    if (!onUpdateWallet) return;
     const newPesos = typeof editPesos === 'number' ? Math.max(0, editPesos) : 0;
     const newLimit = typeof editLimit === 'number' ? Math.max(0, editLimit) : 0;
 
-    if (onUpdateWalletLimit) {
-      await onUpdateWalletLimit(walletId, newLimit);
+    try {
+      if (onUpdateWalletLimit) {
+        await onUpdateWalletLimit(walletId, newLimit);
+      }
+      if (onUpdateWallet) {
+        await onUpdateWallet(walletId, {
+          saldoPesos: newPesos,
+          limitARS: newLimit,
+          titular: editTitular.trim(),
+        });
+      }
+      setEditingWalletId(null);
+      setSuccessMsg('✅ Saldo, titular y límite de la billetera actualizados exitosamente.');
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Error al actualizar billetera');
+      setTimeout(() => setErrorMsg(''), 4000);
     }
-
-    onUpdateWallet(walletId, {
-      saldoPesos: newPesos,
-      limitARS: newLimit,
-      titular: editTitular.trim(),
-    });
-
-    setEditingWalletId(null);
-    setSuccessMsg('✅ Saldo, titular y límite de la billetera actualizados exitosamente.');
-    setTimeout(() => setSuccessMsg(''), 4000);
   };
 
   const handleOpenTransferModal = (fromWallet?: Wallet) => {
@@ -514,12 +571,48 @@ export default function Billeteras({
       {/* Wallet Cards Portfolio Grid */}
       <div className="lg:col-span-2 space-y-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-          <h2 className="text-xl font-bold text-white flex items-center gap-2 font-display">
-            <WalletCards className="w-5 h-5 text-binance-yellow" />
-            Billeteras y Liquidez
-          </h2>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h2 className="text-xl font-bold text-white flex items-center gap-2 font-display">
+              <WalletCards className="w-5 h-5 text-binance-yellow" />
+              Billeteras y Liquidez
+            </h2>
+
+            {/* Status Tabs: Activas / Archivadas */}
+            <div className="flex bg-binance-black p-1 rounded-xl border border-binance-border">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('active')}
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  statusFilter === 'active'
+                    ? 'bg-binance-yellow text-binance-black font-extrabold shadow-xs'
+                    : 'text-binance-gray hover:text-white'
+                }`}
+              >
+                Activas
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${statusFilter === 'active' ? 'bg-binance-black/20 text-binance-black' : 'bg-binance-card text-binance-gray'}`}>
+                  {activeWalletsCount}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('archived')}
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  statusFilter === 'archived'
+                    ? 'bg-binance-yellow text-binance-black font-extrabold shadow-xs'
+                    : 'text-binance-gray hover:text-white'
+                }`}
+              >
+                <Archive className="w-3.5 h-3.5" />
+                Archivadas
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${statusFilter === 'archived' ? 'bg-binance-black/20 text-binance-black' : 'bg-binance-card text-binance-gray'}`}>
+                  {archivedWalletsCount}
+                </span>
+              </button>
+            </div>
+          </div>
+
           <div className="flex items-center gap-2 flex-wrap">
-            {onTransferBetweenWallets && wallets.length >= 2 && (
+            {onTransferBetweenWallets && activeWalletsOnly.length >= 2 && statusFilter === 'active' && (
               <button
                 type="button"
                 onClick={() => handleOpenTransferModal()}
@@ -547,6 +640,21 @@ export default function Billeteras({
             )}
           </div>
         </div>
+
+        {archiveFeedback && (
+          <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
+            archiveFeedback.type === 'success'
+              ? 'bg-binance-green/20 text-binance-green border border-binance-green/40'
+              : 'bg-binance-red/20 text-binance-red border border-binance-red/40'
+          }`}>
+            {archiveFeedback.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+            )}
+            <span>{archiveFeedback.msg}</span>
+          </div>
+        )}
 
         {/* Global Wallet Portfolio Summary Card - Pesos Focus */}
         <div className="bg-binance-black border border-binance-border rounded-2xl p-6 shadow-md relative overflow-hidden">
@@ -731,7 +839,7 @@ export default function Billeteras({
                       </div>
                     </div>
 
-                    {/* Action controls (Edit Saldo/Limit & Lock/Unlock & Transfer) */}
+                    {/* Action controls (Edit Saldo/Limit & Lock/Unlock & Transfer & Archive) */}
                     <div className="flex items-center gap-2 pt-2 border-t border-binance-border/40 flex-wrap">
                       <button
                         onClick={() => handleStartEdit(w)}
@@ -741,7 +849,7 @@ export default function Billeteras({
                         <Edit3 className="w-3.5 h-3.5" /> Modificar
                       </button>
 
-                      {onTransferBetweenWallets && (
+                      {statusFilter === 'active' && onTransferBetweenWallets && (
                         <button
                           onClick={() => handleOpenTransferModal(w)}
                           disabled={w.blocked}
@@ -766,6 +874,28 @@ export default function Billeteras({
                           className="flex-1 min-w-[70px] py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer border bg-binance-red/20 hover:bg-binance-red/30 text-binance-red border-binance-red/40"
                         >
                           <Lock className="w-3.5 h-3.5" /> Bloquear
+                        </button>
+                      )}
+
+                      {statusFilter === 'active' && onArchiveWallet && (
+                        <button
+                          onClick={() => handleArchive(w.id)}
+                          disabled={processingWalletId === w.id}
+                          className="flex-1 min-w-[70px] py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer border border-binance-border hover:border-binance-gray/40 text-binance-gray hover:text-white disabled:opacity-50"
+                          title="Archivar billetera"
+                        >
+                          <Archive className="w-3.5 h-3.5" /> Archivar
+                        </button>
+                      )}
+
+                      {statusFilter === 'archived' && onUnarchiveWallet && (
+                        <button
+                          onClick={() => handleUnarchive(w.id)}
+                          disabled={processingWalletId === w.id}
+                          className="flex-1 min-w-[70px] py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer border bg-binance-yellow/20 hover:bg-binance-yellow/30 text-binance-yellow border-binance-yellow/40 disabled:opacity-50"
+                          title="Desarchivar billetera"
+                        >
+                          <ArchiveRestore className="w-3.5 h-3.5" /> Desarchivar
                         </button>
                       )}
                     </div>
@@ -903,7 +1033,7 @@ export default function Billeteras({
                 onChange={(e) => setSelectedWalletId(e.target.value)}
                 className="w-full px-4 py-2.5 bg-binance-black border border-binance-border rounded-xl text-white focus:ring-2 focus:ring-binance-yellow/20 focus:border-binance-yellow transition-all text-sm outline-hidden cursor-pointer font-medium"
               >
-                {wallets.map(w => (
+                {activeWalletsOnly.map(w => (
                   <option key={w.id} value={w.id}>
                     {w.name} {w.blocked ? '🔒 [BLOQUEADA]' : ''} — Saldo: {formatMoney(w.saldoPesos)}
                   </option>
@@ -1447,7 +1577,7 @@ export default function Billeteras({
                     required
                   >
                     <option value="">Seleccionar Origen</option>
-                    {filteredWallets.map(w => (
+                    {activeWalletsOnly.map(w => (
                       <option key={w.id} value={w.id} disabled={w.blocked}>
                         {w.name} ({formatMoney(w.saldoPesos)}) {w.blocked ? '[BLOQUEADA]' : ''}
                       </option>
@@ -1467,7 +1597,7 @@ export default function Billeteras({
                     required
                   >
                     <option value="">Seleccionar Destino</option>
-                    {filteredWallets.filter(w => w.id !== transferFromId).map(w => (
+                    {activeWalletsOnly.filter(w => w.id !== transferFromId).map(w => (
                       <option key={w.id} value={w.id}>
                         {w.name} ({formatMoney(w.saldoPesos)})
                       </option>

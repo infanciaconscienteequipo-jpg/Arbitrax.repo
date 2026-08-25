@@ -394,6 +394,54 @@ export const walletService = {
     return false;
   },
 
+  async archiveWallet(id: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase.rpc('rpc_wallet_archive_v2', {
+        p_wallet_id: id,
+      });
+      if (!error && (data === true || (typeof data === 'object' && data?.success !== false))) {
+        return true;
+      }
+    } catch (err) {
+      console.warn('rpc_wallet_archive_v2 error, fallback to table update:', err);
+    }
+
+    const { error: directErr } = await supabase
+      .from('wallets')
+      .update({ archived: true, status: 'ARCHIVED', updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (directErr) {
+      console.error('Error al archivar billetera:', directErr.message);
+      throw new Error(directErr.message || 'No se pudo archivar la billetera.');
+    }
+    return true;
+  },
+
+  async unarchiveWallet(id: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase.rpc('rpc_wallet_unarchive_v2', {
+        p_wallet_id: id,
+      });
+      if (!error && (data === true || (typeof data === 'object' && data?.success !== false))) {
+        return true;
+      }
+    } catch (err) {
+      console.warn('rpc_wallet_unarchive_v2 error, fallback to table update:', err);
+    }
+
+    const { error: directErr } = await supabase
+      .from('wallets')
+      .update({ archived: false, status: 'ACTIVE', updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (directErr) {
+      console.error('Error al desarchivar billetera:', directErr.message);
+      throw new Error(directErr.message || 'No se pudo desarchivar la billetera.');
+    }
+    return true;
+  },
+
   async sync(wallet: Wallet): Promise<void> {
     await this.update(wallet);
   },
@@ -413,6 +461,8 @@ function mapWalletFromDB(row: any): Wallet {
     organization_id: row.organization_id,
     limitARS: Number(row.limit_ars || row.limitARS || 3000000),
     blocked: Boolean(row.blocked),
+    archived: Boolean(row.archived || row.status === 'ARCHIVED' || row.status === 'archived'),
+    status: row.status || (row.archived ? 'ARCHIVED' : 'ACTIVE'),
   };
 }
 
@@ -430,6 +480,8 @@ function mapWalletToDB(w: Wallet) {
     organization_id: w.organization_id || null,
     limit_ars: w.limitARS,
     blocked: w.blocked,
+    archived: w.archived,
+    status: w.status,
     updated_at: new Date().toISOString(),
   };
 }

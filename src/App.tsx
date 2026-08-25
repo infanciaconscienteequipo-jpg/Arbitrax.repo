@@ -437,17 +437,6 @@ export default function App() {
   };
 
   const handleUpdateWallet = async (walletId: string, updates: Partial<Wallet>) => {
-    setState(prev => {
-      const updatedWallets = prev.wallets.map(w => {
-        if (w.id === walletId) {
-          const updated = { ...w, ...updates };
-          walletService.sync(updated);
-          return updated;
-        }
-        return w;
-      });
-      return { ...prev, wallets: updatedWallets };
-    });
     if (updates.limitARS !== undefined) {
       await walletService.updateWalletLimit(walletId, updates.limitARS);
     } else {
@@ -466,6 +455,32 @@ export default function App() {
       return true;
     } catch {
       return false;
+    }
+  };
+
+  const handleArchiveWallet = async (walletId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await walletService.archiveWallet(walletId);
+      if (res) {
+        await refreshData();
+        return { success: true };
+      }
+      return { success: false, error: 'No se pudo archivar la billetera' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Error al archivar la billetera' };
+    }
+  };
+
+  const handleUnarchiveWallet = async (walletId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await walletService.unarchiveWallet(walletId);
+      if (res) {
+        await refreshData();
+        return { success: true };
+      }
+      return { success: false, error: 'No se pudo desarchivar la billetera' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Error al desarchivar la billetera' };
     }
   };
 
@@ -999,6 +1014,8 @@ export default function App() {
                     onTransferBetweenWallets={handleTransferBetweenWallets}
                     onBlockWallet={handleBlockWallet}
                     onUnblockWallet={handleUnblockWallet}
+                    onArchiveWallet={handleArchiveWallet}
+                    onUnarchiveWallet={handleUnarchiveWallet}
                   />
                 )}
 

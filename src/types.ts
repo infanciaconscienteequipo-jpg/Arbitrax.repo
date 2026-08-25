@@ -40,6 +40,8 @@ export interface Wallet {
   organization_id?: string;
   limitARS?: number;
   blocked?: boolean;
+  archived?: boolean;
+  status?: string;
 }
 
 export interface ExchangeAccount {
@@ -119,6 +121,8 @@ export interface P2PArbitrage {
 export interface Shift {
   id: string;
   operatorName: string;
+  userId?: string;
+  vendorId?: string;
   startTime: string; // ISO string
   endTime?: string;  // ISO string, null if active
   initialBalances: { [walletId: string]: { pesos: number; usdt: number } };

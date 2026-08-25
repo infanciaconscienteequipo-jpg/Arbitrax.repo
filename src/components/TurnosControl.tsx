@@ -57,6 +57,17 @@ export default function TurnosControl({
   const [selectedShiftForDetails, setSelectedShiftForDetails] = useState<Shift | null>(null);
   const [vendorFilter, setVendorFilter] = useState('all');
 
+  // Solo el VENDEDOR dueño del turno puede ver y presionar el botón "CERRAR JORNADA".
+  // ADMIN, SUPER_ADMIN y CONTADORA solo auditan información, historial y estado.
+  const canCloseActiveShift = isVendedor && !isAdmin && !isContadora && (
+    !activeShift?.userId ||
+    activeShift.userId === currentUser?.id ||
+    (activeShift?.operatorName && currentUser && (
+      activeShift.operatorName.toLowerCase().includes((currentUser.name || '').toLowerCase()) ||
+      activeShift.operatorName.toLowerCase().includes((currentUser.username || '').toLowerCase())
+    ))
+  );
+
   const uniqueVendors = isVendedor
     ? []
     : Array.from(
@@ -416,13 +427,15 @@ export default function TurnosControl({
                     Ver Detalles del Día
                   </button>
 
-                  <button
-                    onClick={() => onEndShift(activeShift.id)}
-                    className="px-5 py-2.5 bg-binance-red text-white font-black text-xs uppercase rounded-xl hover:bg-binance-red/90 transition-all shadow-md cursor-pointer flex items-center gap-2"
-                  >
-                    <Square className="w-4 h-4 fill-current" />
-                    Cerrar Jornada
-                  </button>
+                  {canCloseActiveShift && (
+                    <button
+                      onClick={() => onEndShift(activeShift.id)}
+                      className="px-5 py-2.5 bg-binance-red text-white font-black text-xs uppercase rounded-xl hover:bg-binance-red/90 transition-all shadow-md cursor-pointer flex items-center gap-2"
+                    >
+                      <Square className="w-4 h-4 fill-current" />
+                      Cerrar Jornada
+                    </button>
+                  )}
                 </div>
               </div>
 

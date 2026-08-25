@@ -32,31 +32,30 @@ export const transactionService = {
     // 1. Probar RPC rpc_transaction_update_v2
     try {
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_transaction_update_v2', {
-        p_transaction_id: tx.id,
+        p_id: tx.id,
         p_type: tx.type,
-        p_crypto: tx.crypto,
+        p_timestamp: tx.timestamp || new Date().toISOString(),
+        p_crypto: tx.crypto || 'USDT',
         p_quantity: tx.quantity,
         p_unit_price: tx.unitPrice,
         p_total_pesos: tx.totalPesos,
         p_wallet_id: tx.walletId,
-        p_wallet_name: tx.walletName,
         p_exchange_id: tx.exchangeId || null,
-        p_exchange_name: tx.exchangeName || null,
-        p_operator: tx.operator,
-        p_client: tx.client || null,
         p_supplier: tx.supplier || null,
-        p_notes: tx.notes || null,
+        p_client: tx.client || null,
         p_gain: tx.gain || 0,
-        p_date_string: tx.dateString,
-        p_time_string: tx.timeString,
-        p_organization_id: tx.organization_id || null,
+        p_commission_binance: tx.commissionBinance || 0,
+        p_notes: tx.notes || null,
       });
 
       if (!rpcErr && rpcRes) {
         return typeof rpcRes === 'object' ? mapTransactionFromDB(rpcRes) : tx;
       }
+      if (rpcErr) {
+        console.warn('rpc_transaction_update_v2 returned error:', rpcErr.message);
+      }
     } catch (err) {
-      console.warn('rpc_transaction_update_v2 fallback to direct update');
+      console.warn('rpc_transaction_update_v2 fallback to direct update', err);
     }
 
     // 2. Direct Supabase update fallback
@@ -160,22 +159,22 @@ export const transactionService = {
         p_type: record.type,
         p_asset_type: record.assetType,
         p_wallet_or_exchange_id: record.walletOrExchangeId,
-        p_wallet_or_exchange_name: record.walletOrExchangeName,
         p_amount: record.amount,
-        p_transfer_person: record.transferPerson,
-        p_reason: record.reason,
+        p_transfer_person: record.transferPerson || null,
+        p_reason: record.reason || null,
         p_proof_url: record.proofUrl || null,
-        p_date_string: record.dateString,
-        p_time_string: record.timeString,
-        p_operator: record.operator,
-        p_organization_id: record.organization_id || null,
+        p_notes: (record as any).notes || record.reason || null,
+        p_timestamp: record.timestamp || new Date().toISOString(),
       });
 
       if (!rpcErr && rpcRes) {
         return typeof rpcRes === 'object' ? rpcRes : record;
       }
+      if (rpcErr) {
+        console.warn('rpc_income_expense_update_v2 error:', rpcErr.message);
+      }
     } catch (err) {
-      console.warn('rpc_income_expense_update_v2 fallback to direct update');
+      console.warn('rpc_income_expense_update_v2 fallback to direct update', err);
     }
 
     // 2. Direct Supabase update fallback

@@ -172,6 +172,8 @@ export const dashboardService = {
         organization_id: w.organization_id,
         limitARS: Number(w.limit_ars || w.limitARS || 3000000),
         blocked: Boolean(w.blocked),
+        archived: Boolean(w.archived || w.status === 'ARCHIVED' || w.status === 'archived'),
+        status: w.status || (w.archived ? 'ARCHIVED' : 'ACTIVE'),
       }));
 
       const exchanges: ExchangeAccount[] = (exchangesRes.data || []).map((e: any) => ({
