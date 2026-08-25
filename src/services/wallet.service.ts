@@ -77,6 +77,13 @@ export const walletService = {
       throw new Error(rpcV2Err.message || 'Error al actualizar billetera');
     }
 
+    if (typeof wallet.saldoPesos === 'number' && !isNaN(wallet.saldoPesos)) {
+      await supabase
+        .from('wallets')
+        .update({ saldo_pesos: Math.max(0, wallet.saldoPesos), updated_at: new Date().toISOString() })
+        .eq('id', wallet.id);
+    }
+
     const { data: dbW, error: getErr } = await supabase
       .from('wallets')
       .select('*')

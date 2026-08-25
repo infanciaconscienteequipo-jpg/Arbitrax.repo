@@ -1,6 +1,111 @@
 import { supabase } from '../lib/supabase';
 import { Transaction, IncomeExpenseRecord } from '../types';
 
+// Helper functions to find and adjust wallet and exchange balances reliably by ID or Name
+async function findAndAdjustWalletBalance(idOrName: string | undefined | null, nameFallback: string | undefined | null, delta: number) {
+  if (delta === 0) return;
+  if (!idOrName && !nameFallback) return;
+
+  // 1. Try finding by ID
+  let targetRow: any = null;
+  if (idOrName) {
+    const { data: byId } = await supabase.from('wallets').select('id, name, saldo_pesos').eq('id', idOrName).maybeSingle();
+    if (byId) targetRow = byId;
+  }
+
+  // 2. If not found, try by name
+  if (!targetRow && nameFallback) {
+    const { data: byName } = await supabase.from('wallets').select('id, name, saldo_pesos').ilike('name', nameFallback.trim()).maybeSingle();
+    if (byName) targetRow = byName;
+  }
+
+  // 3. If still not found, try idOrName as name
+  if (!targetRow && idOrName) {
+    const { data: byIdAsName } = await supabase.from('wallets').select('id, name, saldo_pesos').ilike('name', idOrName.trim()).maybeSingle();
+    if (byIdAsName) targetRow = byIdAsName;
+  }
+
+  // 4. Fallback search across all wallets
+  if (!targetRow) {
+    const { data: allWallets } = await supabase.from('wallets').select('id, name, saldo_pesos');
+    if (allWallets && allWallets.length > 0) {
+      const searchTerms = [idOrName, nameFallback].filter(Boolean).map(s => String(s).trim().toLowerCase());
+      targetRow = allWallets.find(w => 
+        searchTerms.includes(w.id.toLowerCase()) || 
+        searchTerms.includes(w.name.trim().toLowerCase())
+      ) || null;
+    }
+  }
+
+  if (targetRow) {
+    const currentBal = Number(targetRow.saldo_pesos || 0);
+    const updatedBal = Math.max(0, currentBal + delta);
+    const { error: updErr } = await supabase
+      .from('wallets')
+      .update({ saldo_pesos: updatedBal, updated_at: new Date().toISOString() })
+      .eq('id', targetRow.id);
+
+    if (updErr) {
+      console.error(`[Error actualizando billetera ${targetRow.name} (${targetRow.id})]:`, updErr.message);
+      throw new Error(`Error al actualizar saldo de la billetera ${targetRow.name}: ${updErr.message}`);
+    }
+  } else {
+    console.warn(`[findAndAdjustWalletBalance] No se encontró billetera para ID: "${idOrName}", Nombre: "${nameFallback}"`);
+  }
+}
+
+async function findAndAdjustExchangeBalance(idOrName: string | undefined | null, nameFallback: string | undefined | null, delta: number) {
+  if (delta === 0) return;
+  if (!idOrName && !nameFallback) return;
+
+  // 1. Try finding by ID
+  let targetRow: any = null;
+  if (idOrName) {
+    const { data: byId } = await supabase.from('exchange_accounts').select('id, name, balance_crypto').eq('id', idOrName).maybeSingle();
+    if (byId) targetRow = byId;
+  }
+
+  // 2. If not found, try by name
+  if (!targetRow && nameFallback) {
+    const { data: byName } = await supabase.from('exchange_accounts').select('id, name, balance_crypto').ilike('name', nameFallback.trim()).maybeSingle();
+    if (byName) targetRow = byName;
+  }
+
+  // 3. If still not found, try idOrName as name
+  if (!targetRow && idOrName) {
+    const { data: byIdAsName } = await supabase.from('exchange_accounts').select('id, name, balance_crypto').ilike('name', idOrName.trim()).maybeSingle();
+    if (byIdAsName) targetRow = byIdAsName;
+  }
+
+  // 4. Fallback search across all exchanges
+  if (!targetRow) {
+    const { data: allExchanges } = await supabase.from('exchange_accounts').select('id, name, balance_crypto');
+    if (allExchanges && allExchanges.length > 0) {
+      const searchTerms = [idOrName, nameFallback].filter(Boolean).map(s => String(s).trim().toLowerCase());
+      targetRow = allExchanges.find(e => 
+        searchTerms.includes(e.id.toLowerCase()) || 
+        searchTerms.includes(e.name.trim().toLowerCase())
+      ) || null;
+    }
+  }
+
+  if (targetRow) {
+    const currentBal = Number(targetRow.balance_crypto || 0);
+    const updatedBal = Math.max(0, currentBal + delta);
+    const { error: updErr } = await supabase
+      .from('exchange_accounts')
+      .update({ balance_crypto: updatedBal, updated_at: new Date().toISOString() })
+      .eq('id', targetRow.id);
+
+    if (updErr) {
+      console.error(`[Error actualizando exchange ${targetRow.name} (${targetRow.id})]:`, updErr.message);
+      throw new Error(`Error al actualizar balance de exchange ${targetRow.name}: ${updErr.message}`);
+    }
+  } else {
+    console.warn(`[findAndAdjustExchangeBalance] No se encontró exchange para ID: "${idOrName}", Nombre: "${nameFallback}"`);
+  }
+}
+
 export const transactionService = {
   async list(organizationId?: string): Promise<Transaction[]> {
     try {
@@ -52,76 +157,24 @@ export const transactionService = {
     const newWalletId = tx.walletId;
     const newExchangeId = tx.exchangeId || null;
 
-    // 2. Calcular los deltas para cada billetera (Pesos ARS)
-    const walletDeltas: Record<string, number> = {};
-
-    // Revertir efecto de la transacción anterior en la billetera vieja
-    if (oldWalletId) {
-      // Si fue compra, se descontaron pesos -> Al revertir se devuelven (+oldPesos)
-      // Si fue venta, se ingresaron pesos -> Al revertir se restan (-oldPesos)
+    // Revertir efecto de la transacción anterior en la billetera y exchange viejos
+    if (oldWalletId || dbOldTx.wallet_name) {
       const revertPesos = oldType === 'compra' ? oldPesos : -oldPesos;
-      walletDeltas[oldWalletId] = (walletDeltas[oldWalletId] || 0) + revertPesos;
+      await findAndAdjustWalletBalance(oldWalletId, dbOldTx.wallet_name, revertPesos);
     }
-
-    // Aplicar efecto de la nueva transacción en la billetera nueva
-    if (newWalletId) {
-      // Si es compra, se descuentan pesos (-newPesos)
-      // Si es venta, se ingresan pesos (+newPesos)
-      const applyPesos = newType === 'compra' ? -newPesos : newPesos;
-      walletDeltas[newWalletId] = (walletDeltas[newWalletId] || 0) + applyPesos;
-    }
-
-    // 3. Calcular los deltas para cada exchange (Cripto)
-    const exchangeDeltas: Record<string, number> = {};
-
-    // Revertir efecto de la transacción anterior en el exchange viejo
-    if (oldExchangeId) {
-      // Si fue compra, se sumaron criptos al stock -> Al revertir se descuentan (-oldQty)
-      // Si fue venta, se restaron criptos del stock -> Al revertir se devuelven (+oldQty)
+    if (oldExchangeId || dbOldTx.exchange_name) {
       const revertCrypto = oldType === 'compra' ? -oldQty : oldQty;
-      exchangeDeltas[oldExchangeId] = (exchangeDeltas[oldExchangeId] || 0) + revertCrypto;
+      await findAndAdjustExchangeBalance(oldExchangeId, dbOldTx.exchange_name, revertCrypto);
     }
 
-    // Aplicar efecto de la nueva transacción en el exchange nuevo
-    if (newExchangeId) {
-      // Si es compra, se suman criptos al stock (+newQty)
-      // Si es venta, se descuentan criptos del stock (-newQty)
+    // Aplicar efecto de la nueva transacción en la billetera y exchange nuevos
+    if (newWalletId || tx.walletName) {
+      const applyPesos = newType === 'compra' ? -newPesos : newPesos;
+      await findAndAdjustWalletBalance(newWalletId, tx.walletName, applyPesos);
+    }
+    if (newExchangeId || tx.exchangeName) {
       const applyCrypto = newType === 'compra' ? newQty : -newQty;
-      exchangeDeltas[newExchangeId] = (exchangeDeltas[newExchangeId] || 0) + applyCrypto;
-    }
-
-    // 4. Aplicar cambios a las billeteras en la base de datos
-    for (const [wId, delta] of Object.entries(walletDeltas)) {
-      if (delta === 0) continue;
-      const { data: wRow } = await supabase.from('wallets').select('saldo_pesos').eq('id', wId).single();
-      if (wRow) {
-        const currentBal = Number(wRow.saldo_pesos || 0);
-        const updatedBal = Math.max(0, currentBal + delta);
-        const { error: wErr } = await supabase
-          .from('wallets')
-          .update({ saldo_pesos: updatedBal, updated_at: new Date().toISOString() })
-          .eq('id', wId);
-        if (wErr) {
-          console.error(`Error actualizando saldo de billetera ${wId}:`, wErr.message);
-        }
-      }
-    }
-
-    // 5. Aplicar cambios a los exchanges en la base de datos
-    for (const [exId, delta] of Object.entries(exchangeDeltas)) {
-      if (delta === 0) continue;
-      const { data: exRow } = await supabase.from('exchange_accounts').select('balance_crypto').eq('id', exId).single();
-      if (exRow) {
-        const currentBal = Number(exRow.balance_crypto || 0);
-        const updatedBal = Math.max(0, currentBal + delta);
-        const { error: exErr } = await supabase
-          .from('exchange_accounts')
-          .update({ balance_crypto: updatedBal, updated_at: new Date().toISOString() })
-          .eq('id', exId);
-        if (exErr) {
-          console.error(`Error actualizando balance de exchange ${exId}:`, exErr.message);
-        }
-      }
+      await findAndAdjustExchangeBalance(newExchangeId, tx.exchangeName, applyCrypto);
     }
 
     // 6. Actualizar el registro en la tabla transactions
@@ -263,64 +316,22 @@ export const transactionService = {
     const newTargetId = record.walletOrExchangeId;
     const newAmount = Number(record.amount || 0);
 
-    // 2. Calcular los deltas para billeteras (pesos) y exchanges (cripto)
-    const walletDeltas: Record<string, number> = {};
-    const exchangeDeltas: Record<string, number> = {};
-
     // Revertir efecto del registro anterior
-    if (oldTargetId) {
-      if (oldAssetType === 'pesos') {
-        // Si fue ingreso, se sumó dinero -> al revertir se resta (-oldAmount)
-        // Si fue egreso, se restó dinero -> al revertir se devuelve (+oldAmount)
-        const revert = oldType === 'ingreso' ? -oldAmount : oldAmount;
-        walletDeltas[oldTargetId] = (walletDeltas[oldTargetId] || 0) + revert;
-      } else {
-        const revert = oldType === 'ingreso' ? -oldAmount : oldAmount;
-        exchangeDeltas[oldTargetId] = (exchangeDeltas[oldTargetId] || 0) + revert;
-      }
+    if (oldAssetType === 'pesos') {
+      const revert = oldType === 'ingreso' ? -oldAmount : oldAmount;
+      await findAndAdjustWalletBalance(oldTargetId, dbOldRec.wallet_or_exchange_name, revert);
+    } else {
+      const revert = oldType === 'ingreso' ? -oldAmount : oldAmount;
+      await findAndAdjustExchangeBalance(oldTargetId, dbOldRec.wallet_or_exchange_name, revert);
     }
 
     // Aplicar efecto del nuevo registro
-    if (newTargetId) {
-      if (newAssetType === 'pesos') {
-        // Si es ingreso, se suma dinero (+newAmount)
-        // Si es egreso, se resta dinero (-newAmount)
-        const apply = newType === 'ingreso' ? newAmount : -newAmount;
-        walletDeltas[newTargetId] = (walletDeltas[newTargetId] || 0) + apply;
-      } else {
-        const apply = newType === 'ingreso' ? newAmount : -newAmount;
-        exchangeDeltas[newTargetId] = (exchangeDeltas[newTargetId] || 0) + apply;
-      }
-    }
-
-    // 3. Aplicar cambios a las billeteras
-    for (const [wId, delta] of Object.entries(walletDeltas)) {
-      if (delta === 0) continue;
-      const { data: wRow } = await supabase.from('wallets').select('saldo_pesos').eq('id', wId).single();
-      if (wRow) {
-        const currentBal = Number(wRow.saldo_pesos || 0);
-        const updatedBal = Math.max(0, currentBal + delta);
-        const { error: wErr } = await supabase
-          .from('wallets')
-          .update({ saldo_pesos: updatedBal, updated_at: new Date().toISOString() })
-          .eq('id', wId);
-        if (wErr) console.error(`Error actualizando saldo de billetera ${wId}:`, wErr.message);
-      }
-    }
-
-    // 4. Aplicar cambios a los exchanges
-    for (const [exId, delta] of Object.entries(exchangeDeltas)) {
-      if (delta === 0) continue;
-      const { data: exRow } = await supabase.from('exchange_accounts').select('balance_crypto').eq('id', exId).single();
-      if (exRow) {
-        const currentBal = Number(exRow.balance_crypto || 0);
-        const updatedBal = Math.max(0, currentBal + delta);
-        const { error: exErr } = await supabase
-          .from('exchange_accounts')
-          .update({ balance_crypto: updatedBal, updated_at: new Date().toISOString() })
-          .eq('id', exId);
-        if (exErr) console.error(`Error actualizando balance de exchange ${exId}:`, exErr.message);
-      }
+    if (newAssetType === 'pesos') {
+      const apply = newType === 'ingreso' ? newAmount : -newAmount;
+      await findAndAdjustWalletBalance(newTargetId, record.walletOrExchangeName, apply);
+    } else {
+      const apply = newType === 'ingreso' ? newAmount : -newAmount;
+      await findAndAdjustExchangeBalance(newTargetId, record.walletOrExchangeName, apply);
     }
 
     // 5. Actualizar la fila en income_expenses

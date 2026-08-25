@@ -306,11 +306,13 @@ export default function Billeteras({
     const targetWallet = wallets.find(w => w.id === walletId);
     if (!targetWallet) return;
     const newLimit = typeof editLimit === 'number' ? Math.max(0, editLimit) : (targetWallet.limitARS || 3000000);
+    const newPesos = typeof editPesos === 'number' && !isNaN(editPesos) ? Math.max(0, editPesos) : targetWallet.saldoPesos;
 
     try {
       if (onUpdateWallet) {
         await onUpdateWallet(walletId, {
           ...targetWallet,
+          saldoPesos: newPesos,
           limitARS: newLimit,
           titular: editTitular.trim(),
         });
