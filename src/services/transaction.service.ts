@@ -111,6 +111,46 @@ export const transactionService = {
     };
   },
 
+  async createIncomeExpense(record: {
+    type: 'ingreso' | 'egreso';
+    assetType: 'pesos' | 'exchange';
+    walletOrExchangeId: string;
+    amount: number;
+    timestamp?: string;
+    transferPerson?: string;
+    reason?: string;
+    proofUrl?: string;
+    shiftId?: string;
+  }): Promise<any> {
+    const rpcParams = {
+      p_type: record.type,
+      p_asset_type: record.assetType,
+      p_wallet_or_exchange_id: record.walletOrExchangeId,
+      p_amount: record.amount,
+      p_timestamp: record.timestamp || new Date().toISOString(),
+      p_transfer_person: record.transferPerson || null,
+      p_reason: record.reason || null,
+      p_proof_url: record.proofUrl || null,
+      p_shift_id: record.shiftId || null,
+    };
+
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_income_expense_create_v2', rpcParams);
+
+    console.error('[DIAGNOSTICO RPC] rpc_income_expense_create_v2', {
+      rpc: 'rpc_income_expense_create_v2',
+      parametros: rpcParams,
+      errorCompleto: rpcErr,
+      respuestaRecibida: rpcRes,
+    });
+
+    if (rpcErr) {
+      console.error('Error in rpc_income_expense_create_v2:', rpcErr.message);
+      throw new Error(rpcErr.message || 'Error al registrar el movimiento de fondos.');
+    }
+
+    return rpcRes;
+  },
+
   async updateIncomeExpense(record: IncomeExpenseRecord): Promise<IncomeExpenseRecord> {
     const rpcParams = {
       p_id: record.id,

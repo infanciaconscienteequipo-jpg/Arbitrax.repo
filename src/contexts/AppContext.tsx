@@ -236,47 +236,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const addIncomeExpense = async (recordData: IncomeExpenseRecord) => {
-    const record: IncomeExpenseRecord = {
-      ...recordData,
+    await transactionService.createIncomeExpense({
+      type: recordData.type,
+      assetType: recordData.assetType,
+      walletOrExchangeId: recordData.walletOrExchangeId,
+      amount: recordData.amount,
+      timestamp: recordData.timestamp,
+      transferPerson: recordData.transferPerson,
+      reason: recordData.reason,
+      proofUrl: recordData.proofUrl,
       shiftId: recordData.shiftId || state.activeShiftId || undefined,
-      organization_id: orgId || authOrg?.id || recordData.organization_id || '',
-    };
-
-    await dashboardService.syncIncomeExpense(record);
-
-    setState(prev => {
-      let updatedWallets = [...prev.wallets];
-      let updatedExchanges = [...prev.exchanges];
-
-      if (record.assetType === 'pesos') {
-        updatedWallets = updatedWallets.map(w => {
-          if (w.id === record.walletOrExchangeId) {
-            const delta = record.type === 'ingreso' ? record.amount : -record.amount;
-            const updatedW = { ...w, saldoPesos: Math.max(0, w.saldoPesos + delta) };
-            walletService.sync(updatedW);
-            return updatedW;
-          }
-          return w;
-        });
-      } else {
-        updatedExchanges = updatedExchanges.map(ex => {
-          if (ex.id === record.walletOrExchangeId) {
-            const delta = record.type === 'ingreso' ? record.amount : -record.amount;
-            const updatedEx = { ...ex, balanceCrypto: Math.max(0, ex.balanceCrypto + delta) };
-            exchangeService.sync(updatedEx);
-            return updatedEx;
-          }
-          return ex;
-        });
-      }
-
-      return {
-        ...prev,
-        wallets: updatedWallets,
-        exchanges: updatedExchanges,
-        incomeExpenses: [record, ...prev.incomeExpenses],
-      };
     });
+
+    await refreshState();
   };
 
   const addP2PCalc = (calc: P2PArbitrage) => {

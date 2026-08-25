@@ -327,31 +327,19 @@ export default function App() {
   };
 
   // Income / Expense Handlers
-  const handleAddIncomeExpense = async (recordData: IncomeExpenseRecord) => {
-    const record: IncomeExpenseRecord = {
-      ...recordData,
+  const handleAddIncomeExpense = async (recordData: Omit<IncomeExpenseRecord, 'id'> | IncomeExpenseRecord) => {
+    await transactionService.createIncomeExpense({
+      type: recordData.type,
+      assetType: recordData.assetType,
+      walletOrExchangeId: recordData.walletOrExchangeId,
+      amount: recordData.amount,
+      timestamp: recordData.timestamp,
+      transferPerson: recordData.transferPerson,
+      reason: recordData.reason,
+      proofUrl: recordData.proofUrl,
       shiftId: recordData.shiftId || state.activeShiftId || undefined,
-      organization_id: recordData.organization_id || authOrg?.id || '',
-    };
+    });
 
-    // Si la operación en Fondos es sobre una billetera en pesos, actualizar su saldo real en Supabase
-    if (record.assetType === 'pesos' && record.walletOrExchangeId) {
-      const wallet = state.wallets.find(w => w.id === record.walletOrExchangeId);
-      if (wallet) {
-        if (currentUser?.role === 'VENDEDOR' && wallet.vendorId && wallet.vendorId !== currentUser.id) {
-          throw new Error('No está autorizado para operar esta billetera.');
-        }
-        const fundType = record.type === 'ingreso' ? 'ingreso_fondos' : 'egreso_fondos';
-        await walletService.fundWallet({
-          walletId: wallet.id,
-          amount: record.amount,
-          type: fundType,
-          organizationId: authOrg?.id || undefined,
-        });
-      }
-    }
-
-    await dashboardService.syncIncomeExpense(record);
     await refreshData();
   };
 
