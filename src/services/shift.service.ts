@@ -40,7 +40,31 @@ export const shiftService = {
       organization_id: organizationId,
     };
 
-    return this.sync(newShift);
+    const saved = await this.sync(newShift);
+
+    // Notify shift started via RPC or fallback
+    try {
+      const { error } = await supabase.rpc('arx_notify_shift_started_v2', {
+        p_operator_name: operatorName,
+        p_organization_id: organizationId,
+        p_shift_id: newShift.id,
+      });
+
+      if (error) {
+        await supabase.from('notifications').insert({
+          title: `🟢 Inicio de Jornada: ${operatorName}`,
+          message: `El operador ${operatorName} ha iniciado una nueva jornada laboral.`,
+          type: 'info',
+          organization_id: organizationId || null,
+          created_at: new Date().toISOString(),
+          read: false,
+        });
+      }
+    } catch {
+      // safe fallback
+    }
+
+    return saved;
   },
 
   async closeShift(shiftId: string, finalBalances?: any): Promise<Shift | null> {

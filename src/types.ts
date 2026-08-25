@@ -49,6 +49,8 @@ export interface ExchangeAccount {
   vendorId?: string;
   vendorName?: string;
   organization_id?: string;
+  archived?: boolean;
+  status?: string;
 }
 
 export interface IncomeExpenseRecord {

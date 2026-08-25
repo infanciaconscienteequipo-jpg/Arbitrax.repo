@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { IncomeExpenseRecord, User, Wallet, ExchangeAccount } from '../types';
 import { storageService } from '../services/storage.service';
 import {
@@ -21,6 +21,9 @@ import {
   Image as ImageIcon,
   AlertTriangle,
   CheckCircle2,
+  Edit3,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
 interface FondosProps {
@@ -31,6 +34,7 @@ interface FondosProps {
   users?: User[];
   activeShiftId?: string | null;
   onAddIncomeExpense: (record: Omit<IncomeExpenseRecord, 'id'>) => void | Promise<void>;
+  onUpdateIncomeExpense?: (record: IncomeExpenseRecord) => Promise<{ success: boolean; error?: string }>;
 }
 
 export default function Fondos({
@@ -41,6 +45,7 @@ export default function Fondos({
   users = [],
   activeShiftId,
   onAddIncomeExpense,
+  onUpdateIncomeExpense,
 }: FondosProps) {
   const [showModal, setShowModal] = useState(false);
 
@@ -55,6 +60,21 @@ export default function Fondos({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [formError, setFormError] = useState('');
+
+  // Edit Income/Expense Modal State
+  const [editingRecord, setEditingRecord] = useState<IncomeExpenseRecord | null>(null);
+  const [editType, setEditType] = useState<'ingreso' | 'egreso'>('ingreso');
+  const [editAmount, setEditAmount] = useState<number | ''>('');
+  const [editTargetId, setEditTargetId] = useState('');
+  const [editTransferPerson, setEditTransferPerson] = useState('');
+  const [editReason, setEditReason] = useState('');
+  const [editError, setEditError] = useState('');
+  const [editSuccess, setEditSuccess] = useState('');
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 25;
 
   // Proof Modal state
   const [viewingProof, setViewingProof] = useState<{ url: string; title: string } | null>(null);
@@ -126,6 +146,68 @@ export default function Fondos({
   const totalIngresos = records.filter(r => r.type === 'ingreso').reduce((sum, r) => sum + r.amount, 0);
   const totalEgresos = records.filter(r => r.type === 'egreso').reduce((sum, r) => sum + r.amount, 0);
   const balanceNeto = totalIngresos - totalEgresos;
+
+  const totalPages = Math.ceil(records.length / itemsPerPage) || 1;
+  const paginatedRecords = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return records.slice(start, start + itemsPerPage);
+  }, [records, currentPage, itemsPerPage]);
+
+  const handleOpenEdit = (r: IncomeExpenseRecord) => {
+    setEditingRecord(r);
+    setEditType(r.type);
+    setEditAmount(r.amount);
+    setEditTargetId(r.walletOrExchangeId || '');
+    setEditTransferPerson(r.transferPerson || '');
+    setEditReason(r.reason || '');
+    setEditError('');
+    setEditSuccess('');
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRecord || !onUpdateIncomeExpense) return;
+
+    const numAmount = typeof editAmount === 'number' ? editAmount : 0;
+    if (numAmount <= 0) {
+      setEditError('El monto debe ser mayor a cero.');
+      return;
+    }
+
+    const walletObj = wallets.find(w => w.id === editTargetId);
+    const exchangeObj = exchanges.find(ex => ex.id === editTargetId);
+    const targetName = walletObj ? walletObj.name : (exchangeObj ? exchangeObj.name : editingRecord.walletOrExchangeName);
+
+    const updated: IncomeExpenseRecord = {
+      ...editingRecord,
+      type: editType,
+      amount: numAmount,
+      walletOrExchangeId: editTargetId || editingRecord.walletOrExchangeId,
+      walletOrExchangeName: targetName,
+      transferPerson: editTransferPerson.trim(),
+      reason: editReason.trim(),
+    };
+
+    setIsSubmittingEdit(true);
+    setEditError('');
+
+    try {
+      const res = await onUpdateIncomeExpense(updated);
+      if (res.success) {
+        setEditSuccess('✅ Registro de fondos actualizado con éxito.');
+        setTimeout(() => {
+          setEditingRecord(null);
+          setEditSuccess('');
+        }, 1200);
+      } else {
+        setEditError(res.error || 'Error al actualizar el registro.');
+      }
+    } catch (err: any) {
+      setEditError(err?.message || 'Error inesperado al actualizar.');
+    } finally {
+      setIsSubmittingEdit(false);
+    }
+  };
 
   // Set default target ID
   React.useEffect(() => {
@@ -501,10 +583,11 @@ export default function Fondos({
                 <th className="px-6 py-4 text-right">Monto</th>
                 <th className="px-6 py-4">Motivo / Notas</th>
                 <th className="px-6 py-4 text-center">Comprobante</th>
+                {onUpdateIncomeExpense && <th className="px-6 py-4 text-center">Acción</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-binance-border/40">
-              {records.map((r, index) => (
+              {paginatedRecords.map((r, index) => (
                 <tr key={r.id ? `record-${r.id}` : `record-idx-${index}`} className="hover:bg-binance-black/40 transition-colors">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="font-bold text-white">{r.dateString}</div>
@@ -556,12 +639,25 @@ export default function Fondos({
                       <span className="text-binance-gray/40 text-[11px] italic">Sin adjunto</span>
                     )}
                   </td>
+
+                  {onUpdateIncomeExpense && (
+                    <td className="px-6 py-4 text-center whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEdit(r)}
+                        className="px-2.5 py-1.5 bg-binance-black hover:bg-binance-card border border-binance-border hover:border-binance-yellow/50 text-binance-yellow rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                        title="Editar movimiento de fondos"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" /> Editar
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
 
               {records.length === 0 && (
                 <tr key="empty-fondos-records">
-                  <td colSpan={7} className="text-center py-12 text-binance-gray italic font-mono">
+                  <td colSpan={onUpdateIncomeExpense ? 8 : 7} className="text-center py-12 text-binance-gray italic font-mono">
                     No se encontraron registros con los filtros seleccionados.
                   </td>
                 </tr>
@@ -569,6 +665,45 @@ export default function Fondos({
             </tbody>
           </table>
         </div>
+
+        {/* PAGINATION BAR */}
+        {records.length > 0 && (
+          <div className="bg-binance-black px-6 py-4 border-t border-binance-border flex flex-col sm:flex-row justify-between items-center gap-3 text-xs">
+            <span className="text-binance-gray">
+              Mostrando <strong className="text-white">{(currentPage - 1) * itemsPerPage + 1}</strong> a{' '}
+              <strong className="text-white">{Math.min(currentPage * itemsPerPage, records.length)}</strong> de{' '}
+              <strong className="text-binance-yellow">{records.length}</strong> registros de fondos
+            </span>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-2.5 py-1.5 bg-binance-card border border-binance-border hover:border-binance-yellow/50 text-white rounded-lg text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" /> Anterior
+                </button>
+
+                <div className="flex items-center gap-1 px-2">
+                  <span className="text-binance-gray">Página</span>
+                  <span className="font-bold text-binance-yellow">{currentPage}</span>
+                  <span className="text-binance-gray">de {totalPages}</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-2.5 py-1.5 bg-binance-card border border-binance-border hover:border-binance-yellow/50 text-white rounded-lg text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1"
+                >
+                  Siguiente <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* MODAL VIEW PROOF */}
@@ -808,6 +943,145 @@ export default function Fondos({
                   'Registrar Movimiento'
                 )}
               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT INCOME/EXPENSE MODAL (rpc_income_expense_update_v2) */}
+      {editingRecord && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-binance-dark border border-binance-border rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex justify-between items-center border-b border-binance-border pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-binance-yellow/20 rounded-xl text-binance-yellow">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-white text-base font-display">
+                    Editar Movimiento de Fondos
+                  </h3>
+                  <span className="text-[10px] text-binance-gray">Actualización financiera vía RPC v2</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingRecord(null)}
+                className="text-binance-gray hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {editError && (
+              <div className="p-3 bg-binance-red/20 border border-binance-red/40 rounded-xl text-xs text-binance-red flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            {editSuccess && (
+              <div className="p-3 bg-binance-green/20 border border-binance-green/40 rounded-xl text-xs text-binance-green flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{editSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEdit} className="space-y-4 text-xs font-mono">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                    Tipo de Movimiento
+                  </label>
+                  <select
+                    value={editType}
+                    onChange={e => setEditType(e.target.value as any)}
+                    className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow font-bold cursor-pointer"
+                  >
+                    <option value="ingreso">🟢 + INGRESO</option>
+                    <option value="egreso">🔴 - EGRESO</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                    Monto ($ ARS / USDT) *
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={editAmount}
+                    onChange={e => setEditAmount(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-white font-mono text-sm focus:border-binance-yellow outline-hidden"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                  Billetera / Exchange Destino
+                </label>
+                <select
+                  value={editTargetId}
+                  onChange={e => setEditTargetId(e.target.value)}
+                  className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-yellow outline-hidden cursor-pointer"
+                >
+                  <optgroup label="Billeteras en Pesos">
+                    {wallets.map(w => (
+                      <option key={w.id} value={w.id}>{w.name} ($ ARS)</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Exchanges Cripto">
+                    {exchanges.map(ex => (
+                      <option key={ex.id} value={ex.id}>{ex.name} (USDT)</option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                  Persona que Transfiere / Titular
+                </label>
+                <input
+                  type="text"
+                  placeholder="Nombre de la persona o entidad"
+                  value={editTransferPerson}
+                  onChange={e => setEditTransferPerson(e.target.value)}
+                  className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
+                  Motivo / Observaciones
+                </label>
+                <input
+                  type="text"
+                  placeholder="Concepto o justificación"
+                  value={editReason}
+                  onChange={e => setEditReason(e.target.value)}
+                  className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingRecord(null)}
+                  className="flex-1 py-2.5 border border-binance-border text-binance-gray hover:text-white font-bold rounded-xl uppercase text-xs cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingEdit}
+                  className="flex-1 py-2.5 bg-binance-yellow hover:bg-binance-yellow/90 disabled:opacity-40 text-binance-black font-extrabold rounded-xl uppercase text-xs shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  {isSubmittingEdit ? 'Guardando...' : 'Guardar Cambios'}
+                </button>
+              </div>
             </form>
           </div>
         </div>

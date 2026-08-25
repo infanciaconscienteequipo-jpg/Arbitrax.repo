@@ -181,6 +181,8 @@ export const dashboardService = {
         vendorId: e.vendor_id || e.vendorId,
         vendorName: e.vendor_name || e.vendorName,
         organization_id: e.organization_id,
+        archived: Boolean(e.archived || e.status === 'ARCHIVED'),
+        status: e.status || (e.archived ? 'ARCHIVED' : 'ACTIVE'),
       }));
 
       const shifts: Shift[] = (shiftsRes.data || []).map((s: any) => ({

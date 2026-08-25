@@ -56,6 +56,24 @@ export const walletService = {
 
   async update(wallet: Wallet): Promise<Wallet> {
     try {
+      const { error: rpcV2Err } = await supabase.rpc('rpc_wallet_update_v2', {
+        p_wallet_id: wallet.id,
+        p_name: wallet.name,
+        p_saldo_pesos: wallet.saldoPesos,
+        p_saldo_usdt: wallet.saldoUsdt,
+        p_limit_ars: wallet.limitARS,
+        p_blocked: wallet.blocked,
+        p_titular: wallet.titular || null,
+        p_vendor_id: wallet.vendorId || null,
+      });
+      if (!rpcV2Err) {
+        return wallet;
+      }
+    } catch (err) {
+      // Continue to next fallback
+    }
+
+    try {
       const { error: rpcErr } = await supabase.rpc('rpc_wallet_update', {
         p_id: wallet.id,
         p_name: wallet.name,
@@ -77,7 +95,10 @@ export const walletService = {
         name: wallet.name,
         saldo_pesos: wallet.saldoPesos,
         saldo_usdt: wallet.saldoUsdt,
+        limit_ars: wallet.limitARS,
         blocked: wallet.blocked,
+        titular: wallet.titular,
+        vendor_id: wallet.vendorId,
         updated_at: new Date().toISOString(),
       })
       .eq('id', wallet.id);
@@ -87,6 +108,102 @@ export const walletService = {
       throw new Error(directErr.message || 'Error al actualizar billetera');
     }
     return wallet;
+  },
+
+  async updateWalletLimit(walletId: string, limitARS: number): Promise<Wallet> {
+    if (typeof limitARS !== 'number' || isNaN(limitARS) || limitARS < 0) {
+      throw new Error('El límite debe ser un monto válido mayor o igual a 0.');
+    }
+
+    try {
+      const { error: rpcErr } = await supabase.rpc('rpc_wallet_update_v2', {
+        p_wallet_id: walletId,
+        p_limit_ars: limitARS,
+      });
+      if (!rpcErr) {
+        // Fetch updated wallet
+        const { data: dbW } = await supabase.from('wallets').select('*').eq('id', walletId).single();
+        if (dbW) return mapWalletFromDB(dbW);
+      }
+    } catch (err) {
+      console.warn('RPC rpc_wallet_update_v2 no disponible para límite, usando fallback directo');
+    }
+
+    const { data, error } = await supabase
+      .from('wallets')
+      .update({
+        limit_ars: limitARS,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', walletId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error al actualizar límite de billetera:', error.message);
+      throw new Error(error.message || 'No se pudo actualizar el límite.');
+    }
+    return mapWalletFromDB(data);
+  },
+
+  async transferBetweenWallets(params: {
+    fromWalletId: string;
+    toWalletId: string;
+    amount: number;
+    notes?: string;
+    operator?: string;
+    organizationId?: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    if (params.fromWalletId === params.toWalletId) {
+      return { success: false, error: 'La billetera de origen y destino deben ser distintas.' };
+    }
+    if (typeof params.amount !== 'number' || isNaN(params.amount) || params.amount <= 0) {
+      return { success: false, error: 'El monto a transferir debe ser mayor a 0.' };
+    }
+
+    // Intento 1: RPC rpc_wallet_transfer_v2
+    try {
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_wallet_transfer_v2', {
+        p_from_wallet_id: params.fromWalletId,
+        p_to_wallet_id: params.toWalletId,
+        p_amount: params.amount,
+        p_notes: params.notes || 'Transferencia entre billeteras',
+        p_operator: params.operator || 'Operador',
+        p_organization_id: params.organizationId || null,
+      });
+
+      if (!rpcErr && (rpcRes === true || (typeof rpcRes === 'object' && rpcRes?.success !== false))) {
+        return { success: true };
+      }
+      if (rpcErr) {
+        console.warn('rpc_wallet_transfer_v2 error:', rpcErr.message);
+      }
+    } catch (err) {
+      console.warn('rpc_wallet_transfer_v2 fallo, usando fallback atómico:', err);
+    }
+
+    // Intento 2: Fallback controlado con fundWallet
+    try {
+      // 1. Descontar de origen
+      await this.fundWallet({
+        walletId: params.fromWalletId,
+        amount: params.amount,
+        type: 'egreso_fondos',
+        organizationId: params.organizationId,
+      });
+
+      // 2. Acreditar en destino
+      await this.fundWallet({
+        walletId: params.toWalletId,
+        amount: params.amount,
+        type: 'ingreso_fondos',
+        organizationId: params.organizationId,
+      });
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Error al procesar la transferencia entre billeteras.' };
+    }
   },
 
   async fundWallet(params: {

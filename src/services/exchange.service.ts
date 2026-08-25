@@ -48,6 +48,54 @@ export const exchangeService = {
     return exchange;
   },
 
+  async archiveExchange(id: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase.rpc('rpc_exchange_archive_v2', {
+        p_exchange_id: id,
+      });
+      if (!error && (data === true || (typeof data === 'object' && data?.success !== false))) {
+        return true;
+      }
+    } catch (err) {
+      console.warn('rpc_exchange_archive_v2 error, fallback to table update:', err);
+    }
+
+    const { error: directErr } = await supabase
+      .from('exchange_accounts')
+      .update({ archived: true, status: 'ARCHIVED', updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (directErr) {
+      console.error('Error al archivar exchange:', directErr.message);
+      throw new Error(directErr.message || 'No se pudo archivar el exchange.');
+    }
+    return true;
+  },
+
+  async unarchiveExchange(id: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase.rpc('rpc_exchange_unarchive_v2', {
+        p_exchange_id: id,
+      });
+      if (!error && (data === true || (typeof data === 'object' && data?.success !== false))) {
+        return true;
+      }
+    } catch (err) {
+      console.warn('rpc_exchange_unarchive_v2 error, fallback to table update:', err);
+    }
+
+    const { error: directErr } = await supabase
+      .from('exchange_accounts')
+      .update({ archived: false, status: 'ACTIVE', updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (directErr) {
+      console.error('Error al desarchivar exchange:', directErr.message);
+      throw new Error(directErr.message || 'No se pudo desarchivar el exchange.');
+    }
+    return true;
+  },
+
   async delete(id: string): Promise<boolean> {
     const { error } = await supabase.from('exchange_accounts').delete().eq('id', id);
     if (error) {
@@ -70,6 +118,8 @@ function mapExchangeFromDB(e: any): ExchangeAccount {
     vendorId: e.vendor_id || e.vendorId,
     vendorName: e.vendor_name || e.vendorName,
     organization_id: e.organization_id,
+    archived: Boolean(e.archived || e.status === 'ARCHIVED'),
+    status: e.status || (e.archived ? 'ARCHIVED' : 'ACTIVE'),
   };
 }
 
@@ -81,8 +131,8 @@ function mapExchangeToDB(e: ExchangeAccount) {
     vendor_id: e.vendorId || null,
     vendor_name: e.vendorName || null,
     organization_id: e.organization_id || null,
-    status: 'ACTIVE',
-    archived: false,
+    status: e.status || (e.archived ? 'ARCHIVED' : 'ACTIVE'),
+    archived: Boolean(e.archived || e.status === 'ARCHIVED'),
     updated_at: new Date().toISOString(),
   };
 }

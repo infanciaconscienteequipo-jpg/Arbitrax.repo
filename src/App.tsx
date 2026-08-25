@@ -436,7 +436,7 @@ export default function App() {
     await refreshData();
   };
 
-  const handleUpdateWallet = (walletId: string, updates: Partial<Wallet>) => {
+  const handleUpdateWallet = async (walletId: string, updates: Partial<Wallet>) => {
     setState(prev => {
       const updatedWallets = prev.wallets.map(w => {
         if (w.id === walletId) {
@@ -448,6 +448,84 @@ export default function App() {
       });
       return { ...prev, wallets: updatedWallets };
     });
+    if (updates.limitARS !== undefined) {
+      await walletService.updateWalletLimit(walletId, updates.limitARS);
+    } else {
+      const wObj = state.wallets.find(w => w.id === walletId);
+      if (wObj) {
+        await walletService.update({ ...wObj, ...updates });
+      }
+    }
+    await refreshData();
+  };
+
+  const handleUpdateWalletLimit = async (walletId: string, newLimitARS: number) => {
+    try {
+      await walletService.updateWalletLimit(walletId, newLimitARS);
+      await refreshData();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleTransferBetweenWallets = async (params: {
+    fromWalletId: string;
+    toWalletId: string;
+    amount: number;
+    notes?: string;
+  }) => {
+    const res = await walletService.transferBetweenWallets(params);
+    if (res.success) {
+      await refreshData();
+    }
+    return res;
+  };
+
+  const handleUpdateTransaction = async (updatedTx: Transaction): Promise<{ success: boolean; error?: string }> => {
+    try {
+      await transactionService.updateTransaction(updatedTx);
+      await refreshData();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Error al actualizar movimiento' };
+    }
+  };
+
+  const handleUpdateIncomeExpense = async (updatedRecord: IncomeExpenseRecord): Promise<{ success: boolean; error?: string }> => {
+    try {
+      await transactionService.updateIncomeExpense(updatedRecord);
+      await refreshData();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Error al actualizar registro de fondos' };
+    }
+  };
+
+  const handleArchiveExchange = async (exchangeId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await exchangeService.archiveExchange(exchangeId);
+      if (res) {
+        await refreshData();
+        return { success: true };
+      }
+      return { success: false, error: 'No se pudo archivar el exchange' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Error al archivar exchange' };
+    }
+  };
+
+  const handleUnarchiveExchange = async (exchangeId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await exchangeService.unarchiveExchange(exchangeId);
+      if (res) {
+        await refreshData();
+        return { success: true };
+      }
+      return { success: false, error: 'No se pudo desarchivar el exchange' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Error al desarchivar exchange' };
+    }
   };
 
   // RPC-based Wallet Blocking / Unblocking
@@ -903,6 +981,7 @@ export default function App() {
                     currentUser={currentUser as any}
                     onClearTransactions={handleClearTransactions}
                     onAddTransaction={handleAddTransaction}
+                    onUpdateTransaction={handleUpdateTransaction}
                   />
                 )}
 
@@ -916,6 +995,8 @@ export default function App() {
                     onFundWallet={handleFundWallet}
                     onAddWallet={handleAddWallet}
                     onUpdateWallet={handleUpdateWallet}
+                    onUpdateWalletLimit={handleUpdateWalletLimit}
+                    onTransferBetweenWallets={handleTransferBetweenWallets}
                     onBlockWallet={handleBlockWallet}
                     onUnblockWallet={handleUnblockWallet}
                   />
@@ -929,6 +1010,8 @@ export default function App() {
                     onAddExchange={handleAddExchange}
                     onUpdateExchangeBalance={handleUpdateExchangeBalance}
                     onTransferCryptoToAdmin={handleTransferCryptoToAdmin}
+                    onArchiveExchange={handleArchiveExchange}
+                    onUnarchiveExchange={handleUnarchiveExchange}
                   />
                 )}
 
@@ -960,6 +1043,7 @@ export default function App() {
                     users={state.users}
                     activeShiftId={state.activeShiftId}
                     onAddIncomeExpense={handleAddIncomeExpense}
+                    onUpdateIncomeExpense={handleUpdateIncomeExpense}
                   />
                 )}
 

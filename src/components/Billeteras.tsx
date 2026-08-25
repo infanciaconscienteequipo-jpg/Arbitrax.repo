@@ -16,6 +16,8 @@ interface BilleterasProps {
   onFundWallet: (walletId: string, amount: number, type: 'ingreso_fondos' | 'egreso_fondos', notes: string) => Promise<void> | void;
   onAddWallet: (name: string, titular: string, initialBalance: number, vendorId?: string) => Promise<void> | void;
   onUpdateWallet?: (walletId: string, updates: Partial<Wallet>) => void;
+  onUpdateWalletLimit?: (walletId: string, limitARS: number) => Promise<boolean | void> | void;
+  onTransferBetweenWallets?: (params: { fromWalletId: string; toWalletId: string; amount: number; notes?: string }) => Promise<{ success: boolean; error?: string }>;
   onBlockWallet?: (walletId: string, note: string) => Promise<boolean>;
   onUnblockWallet?: (walletId: string) => Promise<boolean>;
 }
@@ -29,6 +31,8 @@ export default function Billeteras({
   onFundWallet,
   onAddWallet,
   onUpdateWallet,
+  onUpdateWalletLimit,
+  onTransferBetweenWallets,
   onBlockWallet,
   onUnblockWallet,
 }: BilleterasProps) {
@@ -43,6 +47,16 @@ export default function Billeteras({
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [isSubmittingFund, setIsSubmittingFund] = useState(false);
+
+  // Transfer Between Wallets Modal State
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferFromId, setTransferFromId] = useState('');
+  const [transferToId, setTransferToId] = useState('');
+  const [transferAmount, setTransferAmount] = useState<number | ''>('');
+  const [transferNotes, setTransferNotes] = useState('');
+  const [transferError, setTransferError] = useState('');
+  const [transferSuccess, setTransferSuccess] = useState('');
+  const [isSubmittingTransfer, setIsSubmittingTransfer] = useState(false);
 
   // Blocking Modal State
   const [blockingWallet, setBlockingWallet] = useState<Wallet | null>(null);
@@ -235,10 +249,14 @@ export default function Billeteras({
     setEditTitular(w.titular || '');
   };
 
-  const handleSaveEdit = (walletId: string) => {
+  const handleSaveEdit = async (walletId: string) => {
     if (!onUpdateWallet) return;
     const newPesos = typeof editPesos === 'number' ? Math.max(0, editPesos) : 0;
     const newLimit = typeof editLimit === 'number' ? Math.max(0, editLimit) : 0;
+
+    if (onUpdateWalletLimit) {
+      await onUpdateWalletLimit(walletId, newLimit);
+    }
 
     onUpdateWallet(walletId, {
       saldoPesos: newPesos,
@@ -249,6 +267,80 @@ export default function Billeteras({
     setEditingWalletId(null);
     setSuccessMsg('✅ Saldo, titular y límite de la billetera actualizados exitosamente.');
     setTimeout(() => setSuccessMsg(''), 4000);
+  };
+
+  const handleOpenTransferModal = (fromWallet?: Wallet) => {
+    const fromId = fromWallet?.id || (filteredWallets.length > 0 ? filteredWallets[0].id : '');
+    const toId = filteredWallets.find(w => w.id !== fromId)?.id || wallets.find(w => w.id !== fromId)?.id || '';
+    setTransferFromId(fromId);
+    setTransferToId(toId);
+    setTransferAmount('');
+    setTransferNotes('');
+    setTransferError('');
+    setTransferSuccess('');
+    setShowTransferModal(true);
+  };
+
+  const handleTransferSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onTransferBetweenWallets) return;
+
+    if (!transferFromId || !transferToId) {
+      setTransferError('Debe seleccionar la billetera de origen y de destino.');
+      return;
+    }
+
+    if (transferFromId === transferToId) {
+      setTransferError('La billetera de destino debe ser diferente a la de origen.');
+      return;
+    }
+
+    const fromW = wallets.find(w => w.id === transferFromId);
+    const toW = wallets.find(w => w.id === transferToId);
+
+    if (fromW?.blocked) {
+      setTransferError(`La billetera de origen "${fromW.name}" está bloqueada.`);
+      return;
+    }
+
+    const numAmount = typeof transferAmount === 'number' ? transferAmount : 0;
+    if (numAmount <= 0) {
+      setTransferError('El monto a transferir debe ser mayor a cero.');
+      return;
+    }
+
+    if (fromW && fromW.saldoPesos < numAmount) {
+      setTransferError(`Saldo insuficiente en "${fromW.name}". Disponible: ${formatMoney(fromW.saldoPesos)}.`);
+      return;
+    }
+
+    setIsSubmittingTransfer(true);
+    setTransferError('');
+
+    try {
+      const res = await onTransferBetweenWallets({
+        fromWalletId: transferFromId,
+        toWalletId: transferToId,
+        amount: numAmount,
+        notes: transferNotes.trim() || undefined,
+      });
+
+      if (res.success) {
+        setTransferSuccess(`✅ Transferencia de ${formatMoney(numAmount)} realizada con éxito entre "${fromW?.name}" y "${toW?.name}".`);
+        setTimeout(() => {
+          setShowTransferModal(false);
+          setTransferSuccess('');
+          setTransferAmount('');
+          setTransferNotes('');
+        }, 2000);
+      } else {
+        setTransferError(res.error || 'Error al procesar la transferencia entre billeteras.');
+      }
+    } catch (err: any) {
+      setTransferError(err?.message || 'Error inesperado al conectar con el servidor.');
+    } finally {
+      setIsSubmittingTransfer(false);
+    }
   };
 
   const handleStartBlock = (w: Wallet) => {
@@ -426,21 +518,34 @@ export default function Billeteras({
             <WalletCards className="w-5 h-5 text-binance-yellow" />
             Billeteras y Liquidez
           </h2>
-          {isAdmin && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-binance-gray">Vendedor / Titular:</span>
-              <select
-                value={vendorFilter}
-                onChange={(e) => setVendorFilter(e.target.value)}
-                className="px-3 py-1.5 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-amber-400 font-bold"
+          <div className="flex items-center gap-2 flex-wrap">
+            {onTransferBetweenWallets && wallets.length >= 2 && (
+              <button
+                type="button"
+                onClick={() => handleOpenTransferModal()}
+                className="px-3.5 py-1.5 bg-binance-yellow hover:bg-binance-yellow/90 text-binance-black font-extrabold text-xs rounded-xl flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
               >
-                <option value="all">👤 Todos los Vendedores</option>
-                {activeVendorsList.map(v => (
-                  <option key={v.id} value={v.id}>{v.name || v.username}</option>
-                ))}
-              </select>
-            </div>
-          )}
+                <ArrowUpRight className="w-3.5 h-3.5" />
+                Transferir entre Billeteras
+              </button>
+            )}
+
+            {isAdmin && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-binance-gray">Vendedor / Titular:</span>
+                <select
+                  value={vendorFilter}
+                  onChange={(e) => setVendorFilter(e.target.value)}
+                  className="px-3 py-1.5 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-amber-400 font-bold"
+                >
+                  <option value="all">👤 Todos los Vendedores</option>
+                  {activeVendorsList.map(v => (
+                    <option key={v.id} value={v.id}>{v.name || v.username}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Global Wallet Portfolio Summary Card - Pesos Focus */}
@@ -626,27 +731,39 @@ export default function Billeteras({
                       </div>
                     </div>
 
-                    {/* Action controls (Edit Saldo/Limit & Lock/Unlock) */}
-                    <div className="flex items-center gap-2 pt-2 border-t border-binance-border/40">
+                    {/* Action controls (Edit Saldo/Limit & Lock/Unlock & Transfer) */}
+                    <div className="flex items-center gap-2 pt-2 border-t border-binance-border/40 flex-wrap">
                       <button
                         onClick={() => handleStartEdit(w)}
-                        className="flex-1 py-1.5 px-2.5 bg-binance-black hover:bg-binance-card border border-binance-border hover:border-binance-yellow/40 text-binance-yellow rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                        className="flex-1 min-w-[70px] py-1.5 px-2 bg-binance-black hover:bg-binance-card border border-binance-border hover:border-binance-yellow/40 text-binance-yellow rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                        title="Modificar saldo, titular o límite"
                       >
                         <Edit3 className="w-3.5 h-3.5" /> Modificar
                       </button>
+
+                      {onTransferBetweenWallets && (
+                        <button
+                          onClick={() => handleOpenTransferModal(w)}
+                          disabled={w.blocked}
+                          className="flex-1 min-w-[70px] py-1.5 px-2 bg-binance-black hover:bg-binance-card border border-binance-border hover:border-binance-yellow/40 text-binance-yellow rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-40"
+                          title="Transferir a otra billetera"
+                        >
+                          <ArrowUpRight className="w-3.5 h-3.5" /> Transferir
+                        </button>
+                      )}
 
                       {w.blocked ? (
                         <button
                           onClick={() => handleConfirmUnblock(w)}
                           disabled={isSubmittingUnblock}
-                          className="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border bg-binance-green/20 hover:bg-binance-green/30 text-binance-green border-binance-green/40 disabled:opacity-50"
+                          className="flex-1 min-w-[70px] py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer border bg-binance-green/20 hover:bg-binance-green/30 text-binance-green border-binance-green/40 disabled:opacity-50"
                         >
                           <Unlock className="w-3.5 h-3.5" /> Desbloquear
                         </button>
                       ) : (
                         <button
                           onClick={() => handleStartBlock(w)}
-                          className="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border bg-binance-red/20 hover:bg-binance-red/30 text-binance-red border-binance-red/40"
+                          className="flex-1 min-w-[70px] py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer border bg-binance-red/20 hover:bg-binance-red/30 text-binance-red border-binance-red/40"
                         >
                           <Lock className="w-3.5 h-3.5" /> Bloquear
                         </button>
@@ -1270,6 +1387,165 @@ export default function Billeteras({
                 {isSubmittingBlock ? 'Bloqueando...' : 'Confirmar Bloqueo'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TRANSFER BETWEEN WALLETS MODAL (rpc_wallet_transfer_v2) */}
+      {showTransferModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-binance-dark border border-binance-border rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl relative">
+            <div className="flex justify-between items-center pb-3 border-b border-binance-border">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-binance-yellow/20 rounded-xl text-binance-yellow">
+                  <ArrowUpRight className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-white text-base font-display">
+                    Transferencia entre Billeteras
+                  </h3>
+                  <span className="text-[10px] text-binance-gray">Movimiento interno de liquidez en Pesos (ARS)</span>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowTransferModal(false);
+                  setTransferError('');
+                  setTransferSuccess('');
+                }}
+                className="text-binance-gray hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {transferError && (
+              <div className="p-3 bg-binance-red/10 border border-binance-red/30 rounded-xl text-xs text-binance-red font-bold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                {transferError}
+              </div>
+            )}
+
+            {transferSuccess && (
+              <div className="p-3 bg-binance-green/10 border border-binance-green/30 rounded-xl text-xs text-binance-green font-bold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                {transferSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleTransferSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Billetera Origen */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                    Billetera Origen <span className="text-binance-red">*</span>
+                  </label>
+                  <select
+                    value={transferFromId}
+                    onChange={(e) => setTransferFromId(e.target.value)}
+                    className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-yellow outline-hidden cursor-pointer"
+                    required
+                  >
+                    <option value="">Seleccionar Origen</option>
+                    {filteredWallets.map(w => (
+                      <option key={w.id} value={w.id} disabled={w.blocked}>
+                        {w.name} ({formatMoney(w.saldoPesos)}) {w.blocked ? '[BLOQUEADA]' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Billetera Destino */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                    Billetera Destino <span className="text-binance-green">*</span>
+                  </label>
+                  <select
+                    value={transferToId}
+                    onChange={(e) => setTransferToId(e.target.value)}
+                    className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-green outline-hidden cursor-pointer"
+                    required
+                  >
+                    <option value="">Seleccionar Destino</option>
+                    {filteredWallets.filter(w => w.id !== transferFromId).map(w => (
+                      <option key={w.id} value={w.id}>
+                        {w.name} ({formatMoney(w.saldoPesos)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Amount */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                    Monto a Transferir (ARS) <span className="text-binance-yellow">*</span>
+                  </label>
+                  {transferFromId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const fromW = wallets.find(w => w.id === transferFromId);
+                        if (fromW) setTransferAmount(fromW.saldoPesos);
+                      }}
+                      className="text-[10px] text-binance-yellow hover:underline font-bold cursor-pointer"
+                    >
+                      MAX ({formatMoney(wallets.find(w => w.id === transferFromId)?.saldoPesos || 0)})
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-xs text-binance-gray font-bold">$</span>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    placeholder="0.00"
+                    value={transferAmount}
+                    onChange={(e) => setTransferAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full pl-7 pr-3 py-2 bg-binance-black border border-binance-border rounded-xl text-white font-mono text-sm focus:border-binance-yellow outline-hidden"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                  Notas / Motivo
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Rebalanceo de cuentas, carga de liquidez"
+                  value={transferNotes}
+                  onChange={(e) => setTransferNotes(e.target.value)}
+                  className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-yellow outline-hidden"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowTransferModal(false);
+                    setTransferError('');
+                    setTransferSuccess('');
+                  }}
+                  className="flex-1 py-2.5 border border-binance-border text-binance-gray hover:text-white font-bold rounded-xl uppercase text-xs cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingTransfer || !transferAmount || Number(transferAmount) <= 0 || !transferFromId || !transferToId}
+                  className="flex-1 py-2.5 bg-binance-yellow hover:bg-binance-yellow/90 disabled:opacity-40 text-binance-black font-extrabold rounded-xl uppercase text-xs shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                  {isSubmittingTransfer ? 'Transfiriendo...' : 'Confirmar Transferencia'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

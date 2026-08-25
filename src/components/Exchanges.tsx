@@ -14,7 +14,9 @@ import {
   AlertTriangle,
   CheckCircle2,
   Lock,
-  Sparkles
+  Sparkles,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react';
 
 interface ExchangesProps {
@@ -29,6 +31,8 @@ interface ExchangesProps {
     amount: number;
     notes?: string;
   }) => Promise<{ success: boolean; error?: string }>;
+  onArchiveExchange?: (id: string) => Promise<{ success: boolean; error?: string }>;
+  onUnarchiveExchange?: (id: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export default function Exchanges({
@@ -38,9 +42,13 @@ export default function Exchanges({
   onAddExchange,
   onDeleteExchange,
   onTransferCryptoToAdmin,
+  onArchiveExchange,
+  onUnarchiveExchange,
 }: ExchangesProps) {
   const [selectedVendorFilter, setSelectedVendorFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<'active' | 'archived' | 'all'>('active');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState<{ id: string; msg: string; type: 'success' | 'error' } | null>(null);
   
   // Transfer to Admin Modal State
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -50,6 +58,7 @@ export default function Exchanges({
   const [transferError, setTransferError] = useState<string>('');
   const [transferSuccess, setTransferSuccess] = useState<string>('');
   const [isTransferring, setIsTransferring] = useState<boolean>(false);
+  const [processingExchangeId, setProcessingExchangeId] = useState<string | null>(null);
 
   // Form State
   const [name, setName] = useState('');
@@ -72,9 +81,53 @@ export default function Exchanges({
       u.organization_id === currentOrgId
   );
 
-  // Filter exchanges by org and vendor
+  const handleArchive = async (id: string) => {
+    if (!onArchiveExchange) return;
+    setProcessingExchangeId(id);
+    setActionFeedback(null);
+    try {
+      const res = await onArchiveExchange(id);
+      if (res.success) {
+        setActionFeedback({ id, msg: 'Cuenta de exchange archivada exitosamente.', type: 'success' });
+      } else {
+        setActionFeedback({ id, msg: res.error || 'Error al archivar la cuenta.', type: 'error' });
+      }
+    } catch (err: any) {
+      setActionFeedback({ id, msg: err?.message || 'Error al procesar el archivado.', type: 'error' });
+    } finally {
+      setProcessingExchangeId(null);
+      setTimeout(() => setActionFeedback(null), 3000);
+    }
+  };
+
+  const handleUnarchive = async (id: string) => {
+    if (!onUnarchiveExchange) return;
+    setProcessingExchangeId(id);
+    setActionFeedback(null);
+    try {
+      const res = await onUnarchiveExchange(id);
+      if (res.success) {
+        setActionFeedback({ id, msg: 'Cuenta de exchange desarchivada exitosamente.', type: 'success' });
+      } else {
+        setActionFeedback({ id, msg: res.error || 'Error al desarchivar la cuenta.', type: 'error' });
+      }
+    } catch (err: any) {
+      setActionFeedback({ id, msg: err?.message || 'Error al procesar el desarchivado.', type: 'error' });
+    } finally {
+      setProcessingExchangeId(null);
+      setTimeout(() => setActionFeedback(null), 3000);
+    }
+  };
+
+  // Filter exchanges by org, vendor, and archive status
   const filteredExchanges = exchanges.filter(ex => {
     if (ex.organization_id && ex.organization_id !== currentOrgId) return false;
+
+    // Status / Archive filter
+    const isArchived = ex.archived === true || ex.status === 'archived';
+    if (statusFilter === 'active' && isArchived) return false;
+    if (statusFilter === 'archived' && !isArchived) return false;
+
     if (isVendedor && currentUser) {
       if (!ex.vendorId || ex.vendorId !== currentUser.id) return false;
     } else if (selectedVendorFilter !== 'all') {
@@ -266,60 +319,148 @@ export default function Exchanges({
           </div>
         </div>
 
-        {/* VENDOR FILTER */}
-        {isAdmin && vendorsList.length > 0 && (
-          <div className="flex items-center gap-3 pt-2 border-t border-binance-border/50">
-            <span className="text-xs font-bold text-binance-gray flex items-center gap-1.5">
-              <UserIcon className="w-4 h-4 text-binance-yellow" />
-              Filtrar por Vendedor:
-            </span>
-            <select
-              value={selectedVendorFilter}
-              onChange={e => setSelectedVendorFilter(e.target.value)}
-              className="px-3 py-1.5 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs text-amber-400 font-bold outline-hidden focus:border-binance-yellow cursor-pointer"
-            >
-              <option value="all">👤 Todos los Vendedores</option>
-              {vendorsList.map(v => (
-                <option key={v.id || v.name} value={v.id || v.name}>{v.name} ({v.username || v.role})</option>
-              ))}
-            </select>
+        {/* STATUS & VENDOR FILTERS */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-binance-border/50">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-binance-gray">Estado:</span>
+            <div className="flex bg-binance-black p-1 rounded-xl border border-binance-border text-xs">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('active')}
+                className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                  statusFilter === 'active' ? 'bg-binance-yellow text-binance-black' : 'text-binance-gray hover:text-white'
+                }`}
+              >
+                Activas
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('archived')}
+                className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                  statusFilter === 'archived' ? 'bg-amber-500 text-binance-black' : 'text-binance-gray hover:text-white'
+                }`}
+              >
+                Archivadas
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('all')}
+                className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                  statusFilter === 'all' ? 'bg-binance-card text-white border border-binance-border' : 'text-binance-gray hover:text-white'
+                }`}
+              >
+                Todas
+              </button>
+            </div>
           </div>
-        )}
+
+          {isAdmin && vendorsList.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-binance-gray flex items-center gap-1">
+                <UserIcon className="w-3.5 h-3.5 text-binance-yellow" />
+                Vendedor:
+              </span>
+              <select
+                value={selectedVendorFilter}
+                onChange={e => setSelectedVendorFilter(e.target.value)}
+                className="px-3 py-1.5 bg-binance-black border border-binance-yellow/50 rounded-xl text-xs text-amber-400 font-bold outline-hidden focus:border-binance-yellow cursor-pointer"
+              >
+                <option value="all">👤 Todos los Vendedores</option>
+                {vendorsList.map(v => (
+                  <option key={v.id || v.name} value={v.id || v.name}>{v.name} ({v.username || v.role})</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
       </div>
+
+      {actionFeedback && (
+        <div className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2 ${
+          actionFeedback.type === 'success' ? 'bg-binance-green/20 border-binance-green/40 text-binance-green' : 'bg-binance-red/20 border-binance-red/40 text-binance-red'
+        }`}>
+          {actionFeedback.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+          {actionFeedback.msg}
+        </div>
+      )}
 
       {/* EXCHANGES CARDS GRID */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredExchanges.map(ex => {
           const vendorObj = users.find(u => u.id === ex.vendorId);
           const arsVal = ex.balanceCrypto * estimatedUsdtRate;
+          const isArchived = ex.archived === true || ex.status === 'archived';
+          const isProcessing = processingExchangeId === ex.id;
 
           return (
             <div
               key={ex.id}
-              className="bg-binance-card border border-binance-border rounded-2xl p-5 space-y-4 hover:border-binance-yellow/50 transition-all shadow-md relative overflow-hidden"
+              className={`bg-binance-card border rounded-2xl p-5 space-y-4 hover:border-binance-yellow/50 transition-all shadow-md relative overflow-hidden ${
+                isArchived ? 'border-amber-500/40 opacity-80 bg-binance-card/70' : 'border-binance-border'
+              }`}
             >
               <div className="flex justify-between items-start">
                 <div className="flex items-center gap-3">
-                  <div className="p-3 bg-binance-yellow/10 border border-binance-yellow/30 text-binance-yellow rounded-xl">
+                  <div className={`p-3 rounded-xl border ${
+                    isArchived
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                      : 'bg-binance-yellow/10 border-binance-yellow/30 text-binance-yellow'
+                  }`}>
                     <Coins className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="font-extrabold text-white text-base">{ex.name}</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-extrabold text-white text-base">{ex.name}</h3>
+                      {isArchived && (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-black uppercase">
+                          Archivada
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[10px] text-binance-gray block">
                       Vendedor: <strong className="text-white">{ex.vendorName || vendorObj?.name || 'General'}</strong>
                     </span>
                   </div>
                 </div>
 
-                {onDeleteExchange && (
-                  <button
-                    onClick={() => onDeleteExchange(ex.id)}
-                    className="p-1.5 text-binance-gray hover:text-binance-red hover:bg-binance-red/10 rounded-lg cursor-pointer transition-colors"
-                    title="Eliminar Exchange"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
+                <div className="flex items-center gap-1">
+                  {/* ARCHIVE / UNARCHIVE BUTTON */}
+                  {isArchived ? (
+                    onUnarchiveExchange && (
+                      <button
+                        type="button"
+                        onClick={() => handleUnarchive(ex.id)}
+                        disabled={isProcessing}
+                        className="p-1.5 text-amber-400 hover:text-white hover:bg-amber-500/20 rounded-lg cursor-pointer transition-colors"
+                        title="Desarchivar / Reactivar Exchange"
+                      >
+                        <ArchiveRestore className="w-4 h-4" />
+                      </button>
+                    )
+                  ) : (
+                    onArchiveExchange && (
+                      <button
+                        type="button"
+                        onClick={() => handleArchive(ex.id)}
+                        disabled={isProcessing}
+                        className="p-1.5 text-binance-gray hover:text-amber-400 hover:bg-amber-500/10 rounded-lg cursor-pointer transition-colors"
+                        title="Archivar Exchange"
+                      >
+                        <Archive className="w-4 h-4" />
+                      </button>
+                    )
+                  )}
+
+                  {onDeleteExchange && (
+                    <button
+                      onClick={() => onDeleteExchange(ex.id)}
+                      className="p-1.5 text-binance-gray hover:text-binance-red hover:bg-binance-red/10 rounded-lg cursor-pointer transition-colors"
+                      title="Eliminar Exchange"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-1 bg-binance-black/60 p-4 rounded-xl border border-binance-border">
@@ -333,7 +474,7 @@ export default function Exchanges({
               </div>
 
               {/* ACTION: Enviar al administrador */}
-              {isVendedor && onTransferCryptoToAdmin && ex.vendorId === currentUser?.id && (
+              {isVendedor && onTransferCryptoToAdmin && ex.vendorId === currentUser?.id && !isArchived && (
                 <button
                   onClick={() => handleOpenTransfer(ex)}
                   className="w-full py-2 px-3 bg-binance-black hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
@@ -344,8 +485,8 @@ export default function Exchanges({
               )}
 
               <div className="flex justify-between items-center text-[10px] text-binance-gray pt-1 border-t border-binance-border/40">
-                <span className="flex items-center gap-1 text-binance-green font-bold">
-                  <ShieldCheck className="w-3.5 h-3.5" /> Estado Operativo Real
+                <span className={`flex items-center gap-1 font-bold ${isArchived ? 'text-amber-400' : 'text-binance-green'}`}>
+                  <ShieldCheck className="w-3.5 h-3.5" /> {isArchived ? 'Cuenta Archivada' : 'Estado Operativo Real'}
                 </span>
                 <span>ID: {ex.id.substring(0, 8)}</span>
               </div>

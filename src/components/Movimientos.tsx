@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Transaction, Wallet, ExchangeAccount, User } from '../types';
-import { Search, Filter, ArrowUpRight, ArrowDownLeft, Wallet as WalletIcon, Coins, FileDown, Trash2, Clock, SlidersHorizontal, Plus, ShieldCheck, DollarSign, CheckCircle2 } from 'lucide-react';
+import { Search, Filter, ArrowUpRight, ArrowDownLeft, Wallet as WalletIcon, Coins, FileDown, Trash2, Clock, SlidersHorizontal, Plus, ShieldCheck, DollarSign, CheckCircle2, Edit3, X, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 
 interface MovimientosProps {
   transactions: Transaction[];
@@ -10,6 +10,7 @@ interface MovimientosProps {
   currentUser?: User | null;
   onClearTransactions?: () => void;
   onAddTransaction?: (tx: Omit<Transaction, 'id'>) => void | Promise<void>;
+  onUpdateTransaction?: (tx: Transaction) => Promise<{ success: boolean; error?: string }>;
 }
 
 export default function Movimientos({
@@ -20,6 +21,7 @@ export default function Movimientos({
   currentUser,
   onClearTransactions,
   onAddTransaction,
+  onUpdateTransaction,
 }: MovimientosProps) {
   // P2P Trade Form State
   const [showAddForm, setShowAddForm] = useState(false);
@@ -34,10 +36,28 @@ export default function Movimientos({
   const [formSuccess, setFormSuccess] = useState('');
   const [formError, setFormError] = useState('');
 
+  // Edit Transaction Modal State
+  const [editingTx, setEditingTx] = useState<Transaction | null>(null);
+  const [editType, setEditType] = useState<'compra' | 'venta' | 'ingreso_fondos' | 'egreso_fondos'>('compra');
+  const [editTotalPesos, setEditTotalPesos] = useState<number | ''>('');
+  const [editCryptoQty, setEditCryptoQty] = useState<number | ''>('');
+  const [editWalletId, setEditWalletId] = useState('');
+  const [editExchangeId, setEditExchangeId] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editClientOrSupplier, setEditClientOrSupplier] = useState('');
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [editSuccess, setEditSuccess] = useState('');
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 25;
+
   // Filters State
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
   const [cryptoFilter, setCryptoFilter] = useState('all');
   const [walletFilter, setWalletFilter] = useState('all');
+  const [exchangeFilter, setExchangeFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [vendorFilter, setVendorFilter] = useState('all');
   const [operatorSearch, setOperatorSearch] = useState('');
@@ -48,6 +68,11 @@ export default function Movimientos({
   const [customStartTime, setCustomStartTime] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [customEndTime, setCustomEndTime] = useState('');
+
+  // Reset pagination when filters change
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [timeFilter, cryptoFilter, walletFilter, exchangeFilter, typeFilter, vendorFilter, generalSearch, operatorSearch, customStartDate, customStartTime, customEndDate, customEndTime]);
 
   const currentOrgId = currentUser?.organization_id || '';
   const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN';
@@ -218,6 +243,11 @@ export default function Movimientos({
 
     if (cryptoFilter !== 'all' && t.crypto.toUpperCase() !== cryptoFilter.toUpperCase()) return false;
     if (walletFilter !== 'all' && t.walletId !== walletFilter) return false;
+    if (exchangeFilter !== 'all') {
+      const matchExId = (t as any).exchangeId === exchangeFilter || (t as any).exchange_id === exchangeFilter;
+      const matchExName = (t.notes || '').toLowerCase().includes(exchangeFilter.toLowerCase());
+      if (!matchExId && !matchExName) return false;
+    }
 
     if (typeFilter !== 'all') {
       if (typeFilter === 'compra' && t.type !== 'compra') return false;
@@ -268,6 +298,81 @@ export default function Movimientos({
   const filteredTotalGains = filteredTxs
     .filter(t => t.type === 'venta')
     .reduce((sum, t) => sum + (t.gain || 0), 0);
+
+  const totalPages = Math.ceil(filteredTxs.length / itemsPerPage) || 1;
+  const paginatedTxs = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredTxs.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredTxs, currentPage, itemsPerPage]);
+
+  const handleOpenEdit = (tx: Transaction) => {
+    setEditingTx(tx);
+    setEditType(tx.type);
+    setEditTotalPesos(tx.totalPesos);
+    setEditCryptoQty(tx.quantity);
+    setEditWalletId(tx.walletId || '');
+    setEditExchangeId(tx.exchangeId || '');
+    setEditNotes(tx.notes || '');
+    setEditClientOrSupplier(tx.client || tx.supplier || '');
+    setEditError('');
+    setEditSuccess('');
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTx || !onUpdateTransaction) return;
+
+    const numPesos = typeof editTotalPesos === 'number' ? editTotalPesos : 0;
+    const numCrypto = typeof editCryptoQty === 'number' ? editCryptoQty : 0;
+
+    if (numPesos <= 0) {
+      setEditError('El monto en pesos debe ser mayor a cero.');
+      return;
+    }
+    if (numCrypto <= 0) {
+      setEditError('La cantidad cripto debe ser mayor a cero.');
+      return;
+    }
+
+    const calculatedPrice = numCrypto > 0 ? numPesos / numCrypto : 0;
+    const walletObj = wallets.find(w => w.id === editWalletId);
+    const exchangeObj = exchanges.find(ex => ex.id === editExchangeId);
+
+    const updated: Transaction = {
+      ...editingTx,
+      type: editType,
+      totalPesos: numPesos,
+      quantity: numCrypto,
+      unitPrice: calculatedPrice,
+      walletId: editWalletId || editingTx.walletId,
+      walletName: walletObj?.name || editingTx.walletName,
+      exchangeId: editExchangeId || editingTx.exchangeId,
+      exchangeName: exchangeObj?.name || editingTx.exchangeName,
+      notes: editNotes.trim(),
+      client: editType === 'venta' ? editClientOrSupplier : undefined,
+      supplier: editType === 'compra' ? editClientOrSupplier : undefined,
+    };
+
+    setIsSubmittingEdit(true);
+    setEditError('');
+
+    try {
+      const res = await onUpdateTransaction(updated);
+      if (res.success) {
+        setEditSuccess('✅ Movimiento actualizado exitosamente.');
+        setTimeout(() => {
+          setEditingTx(null);
+          setEditSuccess('');
+        }, 1200);
+      } else {
+        setEditError(res.error || 'Error al actualizar el movimiento.');
+      }
+    } catch (err: any) {
+      setEditError(err?.message || 'Error inesperado al actualizar el movimiento.');
+    } finally {
+      setIsSubmittingEdit(false);
+    }
+  };
 
   const formatMoney = (amount: number) => {
     return new Intl.NumberFormat('es-AR', {
@@ -569,6 +674,19 @@ export default function Movimientos({
             ))}
           </select>
 
+          {exchanges.length > 0 && (
+            <select
+              value={exchangeFilter}
+              onChange={(e) => setExchangeFilter(e.target.value)}
+              className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs focus:border-binance-yellow outline-hidden cursor-pointer text-white"
+            >
+              <option value="all">Todos los Exchanges</option>
+              {exchanges.map(ex => (
+                <option key={ex.id} value={ex.id}>{ex.name}</option>
+              ))}
+            </select>
+          )}
+
           <select
             value={cryptoFilter}
             onChange={(e) => setCryptoFilter(e.target.value)}
@@ -703,10 +821,11 @@ export default function Movimientos({
                   <th className="px-6 py-4 text-right">Monto Pesos</th>
                   <th className="px-6 py-4 text-right text-binance-green">Ganancia</th>
                   <th className="px-6 py-4">Operador & Detalle</th>
+                  {onUpdateTransaction && <th className="px-6 py-4 text-center">Acción</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-binance-border/40 font-mono">
-                {filteredTxs.map((t, idx) => (
+                {paginatedTxs.map((t, idx) => (
                   <tr key={t.id || idx} className="hover:bg-binance-black/40 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="font-bold text-white">{t.dateString}</div>
@@ -756,13 +875,253 @@ export default function Movimientos({
                       <div className="font-bold text-white">{t.operator}</div>
                       {t.notes && <div className="text-[10px] text-binance-gray italic">"{t.notes}"</div>}
                     </td>
+
+                    {onUpdateTransaction && (
+                      <td className="px-6 py-4 text-center whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEdit(t)}
+                          className="px-2.5 py-1.5 bg-binance-black hover:bg-binance-card border border-binance-border hover:border-binance-yellow/50 text-binance-yellow rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                          title="Editar operación"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" /> Editar
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+
+        {/* PAGINATION BAR */}
+        {filteredTxs.length > 0 && (
+          <div className="bg-binance-black px-6 py-4 border-t border-binance-border flex flex-col sm:flex-row justify-between items-center gap-3 text-xs">
+            <span className="text-binance-gray">
+              Mostrando <strong className="text-white">{(currentPage - 1) * itemsPerPage + 1}</strong> a{' '}
+              <strong className="text-white">{Math.min(currentPage * itemsPerPage, filteredTxs.length)}</strong> de{' '}
+              <strong className="text-binance-yellow">{filteredTxs.length}</strong> movimientos
+            </span>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-2.5 py-1.5 bg-binance-card border border-binance-border hover:border-binance-yellow/50 text-white rounded-lg text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" /> Anterior
+                </button>
+
+                <div className="flex items-center gap-1 px-2">
+                  <span className="text-binance-gray">Página</span>
+                  <span className="font-bold text-binance-yellow">{currentPage}</span>
+                  <span className="text-binance-gray">de {totalPages}</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-2.5 py-1.5 bg-binance-card border border-binance-border hover:border-binance-yellow/50 text-white rounded-lg text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1"
+                >
+                  Siguiente <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* EDIT TRANSACTION MODAL (rpc_transaction_update_v2) */}
+      {editingTx && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-binance-dark border border-binance-border rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl relative">
+            <div className="flex justify-between items-center pb-3 border-b border-binance-border">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-binance-yellow/20 rounded-xl text-binance-yellow">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-white text-base font-display">
+                    Editar Movimiento P2P
+                  </h3>
+                  <span className="text-[10px] text-binance-gray">Actualización financiera vía RPC v2</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingTx(null)}
+                className="text-binance-gray hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {editError && (
+              <div className="p-3 bg-binance-red/10 border border-binance-red/30 rounded-xl text-xs text-binance-red font-bold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                {editError}
+              </div>
+            )}
+
+            {editSuccess && (
+              <div className="p-3 bg-binance-green/10 border border-binance-green/30 rounded-xl text-xs text-binance-green font-bold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                {editSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              {/* Type Toggle */}
+              <div className="grid grid-cols-2 gap-2 bg-binance-black p-1 rounded-xl border border-binance-border">
+                <button
+                  type="button"
+                  onClick={() => setEditType('compra')}
+                  className={`py-2 px-3 rounded-lg font-black uppercase text-xs transition-all cursor-pointer ${
+                    editType === 'compra' ? 'bg-binance-red text-white' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  🔴 Compra
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditType('venta')}
+                  className={`py-2 px-3 rounded-lg font-black uppercase text-xs transition-all cursor-pointer ${
+                    editType === 'venta' ? 'bg-binance-green text-binance-black' : 'text-binance-gray hover:text-white'
+                  }`}
+                >
+                  🟢 Venta
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Monto Pesos */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                    Monto en Pesos ($ ARS) *
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={editTotalPesos}
+                    onChange={e => setEditTotalPesos(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-white font-mono text-sm focus:border-binance-yellow outline-hidden"
+                  />
+                </div>
+
+                {/* Cantidad Cripto */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                    Cantidad Cripto ({editingTx.crypto || 'USDT'}) *
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={editCryptoQty}
+                    onChange={e => setEditCryptoQty(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-white font-mono text-sm focus:border-binance-yellow outline-hidden"
+                  />
+                </div>
+              </div>
+
+              {/* Price calculation preview */}
+              <div className="p-3 bg-binance-black rounded-xl border border-binance-border flex justify-between items-center text-xs">
+                <span className="text-binance-gray">Precio Unitario Calculado:</span>
+                <span className="font-extrabold text-binance-yellow font-mono">
+                  {typeof editTotalPesos === 'number' && typeof editCryptoQty === 'number' && editCryptoQty > 0
+                    ? formatMoney(editTotalPesos / editCryptoQty)
+                    : '$0,00'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Billetera */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                    Billetera Asociada
+                  </label>
+                  <select
+                    value={editWalletId}
+                    onChange={e => setEditWalletId(e.target.value)}
+                    className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-yellow outline-hidden cursor-pointer"
+                  >
+                    {wallets.map(w => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Exchange */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                    Exchange Asociado
+                  </label>
+                  <select
+                    value={editExchangeId}
+                    onChange={e => setEditExchangeId(e.target.value)}
+                    className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-yellow outline-hidden cursor-pointer"
+                  >
+                    <option value="">(Ninguno / P2P directo)</option>
+                    {exchanges.map(ex => (
+                      <option key={ex.id} value={ex.id}>{ex.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Client / Supplier */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                  Cliente / Proveedor / Contraparte
+                </label>
+                <input
+                  type="text"
+                  placeholder="Nombre o alias de contraparte"
+                  value={editClientOrSupplier}
+                  onChange={e => setEditClientOrSupplier(e.target.value)}
+                  className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-yellow outline-hidden"
+                />
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-binance-gray uppercase font-bold block">
+                  Notas / Observaciones
+                </label>
+                <input
+                  type="text"
+                  placeholder="Detalles de la transacción"
+                  value={editNotes}
+                  onChange={e => setEditNotes(e.target.value)}
+                  className="w-full px-3 py-2 bg-binance-black border border-binance-border rounded-xl text-xs text-white focus:border-binance-yellow outline-hidden"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingTx(null)}
+                  className="flex-1 py-2.5 border border-binance-border text-binance-gray hover:text-white font-bold rounded-xl uppercase text-xs cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingEdit}
+                  className="flex-1 py-2.5 bg-binance-yellow hover:bg-binance-yellow/90 disabled:opacity-40 text-binance-black font-extrabold rounded-xl uppercase text-xs shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  {isSubmittingEdit ? 'Guardando...' : 'Guardar Cambios'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
