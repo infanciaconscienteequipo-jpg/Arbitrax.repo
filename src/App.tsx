@@ -437,25 +437,25 @@ export default function App() {
   };
 
   const handleUpdateWallet = async (walletId: string, updates: Partial<Wallet>) => {
-    if (updates.limitARS !== undefined) {
-      await walletService.updateWalletLimit(walletId, updates.limitARS);
-    } else {
-      const wObj = state.wallets.find(w => w.id === walletId);
-      if (wObj) {
-        await walletService.update({ ...wObj, ...updates });
-      }
-    }
+    const wObj = state.wallets.find(w => w.id === walletId);
+    if (!wObj) throw new Error('Billetera no encontrada');
+    const updatedWallet: Wallet = {
+      ...wObj,
+      ...updates,
+    };
+    await walletService.update(updatedWallet);
     await refreshData();
   };
 
   const handleUpdateWalletLimit = async (walletId: string, newLimitARS: number) => {
-    try {
-      await walletService.updateWalletLimit(walletId, newLimitARS);
-      await refreshData();
-      return true;
-    } catch {
-      return false;
-    }
+    const wObj = state.wallets.find(w => w.id === walletId);
+    if (!wObj) throw new Error('Billetera no encontrada');
+    await walletService.update({
+      ...wObj,
+      limitARS: newLimitARS,
+    });
+    await refreshData();
+    return true;
   };
 
   const handleArchiveWallet = async (walletId: string): Promise<{ success: boolean; error?: string }> => {

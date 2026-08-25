@@ -338,16 +338,19 @@ export default function Movimientos({
     const walletObj = wallets.find(w => w.id === editWalletId);
     const exchangeObj = exchanges.find(ex => ex.id === editExchangeId);
 
+    const targetWalletId = editWalletId !== undefined && editWalletId !== '' ? editWalletId : editingTx.walletId;
+    const targetExchangeId = editExchangeId !== undefined ? (editExchangeId.trim() === '' ? undefined : editExchangeId.trim()) : editingTx.exchangeId;
+
     const updated: Transaction = {
       ...editingTx,
       type: editType,
       totalPesos: numPesos,
       quantity: numCrypto,
       unitPrice: calculatedPrice,
-      walletId: editWalletId || editingTx.walletId,
-      walletName: walletObj?.name || editingTx.walletName,
-      exchangeId: editExchangeId || editingTx.exchangeId,
-      exchangeName: exchangeObj?.name || editingTx.exchangeName,
+      walletId: targetWalletId,
+      walletName: walletObj?.name || (targetWalletId === editingTx.walletId ? editingTx.walletName : ''),
+      exchangeId: targetExchangeId,
+      exchangeName: targetExchangeId ? (exchangeObj?.name || (targetExchangeId === editingTx.exchangeId ? editingTx.exchangeName : '')) : undefined,
       notes: editNotes.trim(),
       client: editType === 'venta' ? editClientOrSupplier : undefined,
       supplier: editType === 'compra' ? editClientOrSupplier : undefined,

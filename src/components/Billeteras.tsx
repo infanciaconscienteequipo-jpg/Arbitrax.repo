@@ -303,26 +303,24 @@ export default function Billeteras({
   };
 
   const handleSaveEdit = async (walletId: string) => {
-    const newPesos = typeof editPesos === 'number' ? Math.max(0, editPesos) : 0;
-    const newLimit = typeof editLimit === 'number' ? Math.max(0, editLimit) : 0;
+    const targetWallet = wallets.find(w => w.id === walletId);
+    if (!targetWallet) return;
+    const newLimit = typeof editLimit === 'number' ? Math.max(0, editLimit) : (targetWallet.limitARS || 3000000);
 
     try {
-      if (onUpdateWalletLimit) {
-        await onUpdateWalletLimit(walletId, newLimit);
-      }
       if (onUpdateWallet) {
         await onUpdateWallet(walletId, {
-          saldoPesos: newPesos,
+          ...targetWallet,
           limitARS: newLimit,
           titular: editTitular.trim(),
         });
       }
       setEditingWalletId(null);
-      setSuccessMsg('✅ Saldo, titular y límite de la billetera actualizados exitosamente.');
+      setSuccessMsg('✅ Billetera actualizada exitosamente.');
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err: any) {
       setErrorMsg(err?.message || 'Error al actualizar billetera');
-      setTimeout(() => setErrorMsg(''), 4000);
+      setTimeout(() => setErrorMsg(''), 6000);
     }
   };
 

@@ -29,7 +29,7 @@ export const transactionService = {
   },
 
   async updateTransaction(tx: Transaction): Promise<Transaction> {
-    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_transaction_update_v2', {
+    const rpcParams = {
       p_id: tx.id,
       p_type: tx.type,
       p_timestamp: tx.timestamp || new Date().toISOString(),
@@ -44,6 +44,15 @@ export const transactionService = {
       p_gain: tx.gain || 0,
       p_commission_binance: tx.commissionBinance || 0,
       p_notes: tx.notes || null,
+    };
+
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_transaction_update_v2', rpcParams);
+
+    console.error('[DIAGNOSTICO RPC] rpc_transaction_update_v2', {
+      rpc: 'rpc_transaction_update_v2',
+      parametros: rpcParams,
+      errorCompleto: rpcErr,
+      respuestaRecibida: rpcRes,
     });
 
     if (rpcErr) {
@@ -103,7 +112,7 @@ export const transactionService = {
   },
 
   async updateIncomeExpense(record: IncomeExpenseRecord): Promise<IncomeExpenseRecord> {
-    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_income_expense_update_v2', {
+    const rpcParams = {
       p_id: record.id,
       p_type: record.type,
       p_asset_type: record.assetType,
@@ -113,6 +122,15 @@ export const transactionService = {
       p_transfer_person: record.transferPerson || null,
       p_reason: record.reason || null,
       p_proof_url: record.proofUrl || null,
+    };
+
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_income_expense_update_v2', rpcParams);
+
+    console.error('[DIAGNOSTICO RPC] rpc_income_expense_update_v2', {
+      rpc: 'rpc_income_expense_update_v2',
+      parametros: rpcParams,
+      errorCompleto: rpcErr,
+      respuestaRecibida: rpcRes,
     });
 
     if (rpcErr) {
