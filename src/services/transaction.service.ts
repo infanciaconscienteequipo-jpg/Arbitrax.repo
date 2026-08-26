@@ -134,79 +134,35 @@ export const transactionService = {
   },
 
   async updateTransaction(tx: Transaction): Promise<Transaction> {
-    // 1. Obtener la transacción original de Supabase para calcular la diferencia financiera exacta
-    const { data: dbOldTx, error: fetchErr } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('id', tx.id)
-      .single();
+    // La edición financiera se ejecuta 100% en Supabase mediante una RPC atómica.
+    // Esto evita que wallet/exchange queden desincronizados si una de las etapas falla.
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_transaction_update_v3', {
+      p_transaction_id: tx.id,
+      p_type: tx.type,
+      p_crypto: tx.crypto || 'USDT',
+      p_quantity: Number(tx.quantity || 0),
+      p_unit_price: Number(tx.unitPrice || 0),
+      p_total_pesos: Number(tx.totalPesos || 0),
+      p_wallet_id: tx.walletId,
+      p_wallet_name: tx.walletName,
+      p_exchange_id: tx.exchangeId || null,
+      p_supplier: tx.supplier || null,
+      p_client: tx.client || null,
+      p_gain: Number(tx.gain || 0),
+      p_commission_binance: Number(tx.commissionBinance || 0),
+      p_notes: tx.notes || null,
+    });
 
-    if (fetchErr || !dbOldTx) {
-      throw new Error(fetchErr?.message || 'No se encontró la transacción original.');
+    if (rpcErr) {
+      console.error('Error en rpc_transaction_update_v3:', rpcErr.message);
+      throw new Error(rpcErr.message || 'Error al actualizar la transacción.');
     }
 
-    const oldType = dbOldTx.type as 'compra' | 'venta';
-    const oldPesos = Number(dbOldTx.total_pesos || 0);
-    const oldQty = Number(dbOldTx.quantity || 0);
-    const oldWalletId = dbOldTx.wallet_id;
-    const oldExchangeId = dbOldTx.exchange_id || null;
-
-    const newType = tx.type;
-    const newPesos = Number(tx.totalPesos || 0);
-    const newQty = Number(tx.quantity || 0);
-    const newWalletId = tx.walletId;
-    const newExchangeId = tx.exchangeId || null;
-
-    // Revertir efecto de la transacción anterior en la billetera y exchange viejos
-    if (oldWalletId || dbOldTx.wallet_name) {
-      const revertPesos = oldType === 'compra' ? oldPesos : -oldPesos;
-      await findAndAdjustWalletBalance(oldWalletId, dbOldTx.wallet_name, revertPesos);
-    }
-    if (oldExchangeId || dbOldTx.exchange_name) {
-      const revertCrypto = oldType === 'compra' ? -oldQty : oldQty;
-      await findAndAdjustExchangeBalance(oldExchangeId, dbOldTx.exchange_name, revertCrypto);
+    if (!rpcRes) {
+      throw new Error('Supabase no devolvió la transacción actualizada.');
     }
 
-    // Aplicar efecto de la nueva transacción en la billetera y exchange nuevos
-    if (newWalletId || tx.walletName) {
-      const applyPesos = newType === 'compra' ? -newPesos : newPesos;
-      await findAndAdjustWalletBalance(newWalletId, tx.walletName, applyPesos);
-    }
-    if (newExchangeId || tx.exchangeName) {
-      const applyCrypto = newType === 'compra' ? newQty : -newQty;
-      await findAndAdjustExchangeBalance(newExchangeId, tx.exchangeName, applyCrypto);
-    }
-
-    // 6. Actualizar el registro en la tabla transactions
-    const { data: updatedTxRow, error: txUpdateErr } = await supabase
-      .from('transactions')
-      .update({
-        type: tx.type,
-        timestamp: tx.timestamp || dbOldTx.timestamp,
-        crypto: tx.crypto || 'USDT',
-        quantity: tx.quantity,
-        unit_price: tx.unitPrice,
-        total_pesos: tx.totalPesos,
-        wallet_id: tx.walletId,
-        wallet_name: tx.walletName,
-        exchange_id: tx.exchangeId || null,
-        supplier: tx.supplier || null,
-        client: tx.client || null,
-        gain: tx.gain || 0,
-        commission_binance: tx.commissionBinance || 0,
-        notes: tx.notes || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', tx.id)
-      .select()
-      .single();
-
-    if (txUpdateErr) {
-      console.error('Error in updateTransaction direct table update:', txUpdateErr.message);
-      throw new Error(txUpdateErr.message || 'Error al actualizar la transacción.');
-    }
-
-    return mapTransactionFromDB(updatedTxRow);
+    return mapTransactionFromDB(rpcRes);
   },
 
   async fetchTransactionsPage(params: {
@@ -295,69 +251,32 @@ export const transactionService = {
   },
 
   async updateIncomeExpense(record: IncomeExpenseRecord): Promise<IncomeExpenseRecord> {
-    // 1. Obtener el registro de fondos original de Supabase
-    const { data: dbOldRec, error: fetchErr } = await supabase
-      .from('income_expenses')
-      .select('*')
-      .eq('id', record.id)
-      .single();
+    // La edición de fondos también se ejecuta como una única transacción SQL.
+    // Regla: primero se revierte el movimiento original y luego se aplica
+    // exactamente el movimiento nuevo, incluyendo cambio de wallet/exchange,
+    // tipo y monto.
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('rpc_income_expense_update_v3', {
+      p_income_expense_id: record.id,
+      p_type: record.type,
+      p_asset_type: record.assetType,
+      p_wallet_or_exchange_id: record.walletOrExchangeId,
+      p_wallet_or_exchange_name: record.walletOrExchangeName,
+      p_amount: Number(record.amount || 0),
+      p_transfer_person: record.transferPerson || null,
+      p_reason: record.reason || null,
+      p_proof_url: record.proofUrl || null,
+    });
 
-    if (fetchErr || !dbOldRec) {
-      throw new Error(fetchErr?.message || 'No se encontró el registro de fondos original.');
+    if (rpcErr) {
+      console.error('Error en rpc_income_expense_update_v3:', rpcErr.message);
+      throw new Error(rpcErr.message || 'Error al actualizar el registro de fondos.');
     }
 
-    const oldType = dbOldRec.type as 'ingreso' | 'egreso';
-    const oldAssetType = (dbOldRec.asset_type || 'pesos') as 'pesos' | 'exchange';
-    const oldTargetId = dbOldRec.wallet_or_exchange_id;
-    const oldAmount = Number(dbOldRec.amount || 0);
-
-    const newType = record.type;
-    const newAssetType = record.assetType || 'pesos';
-    const newTargetId = record.walletOrExchangeId;
-    const newAmount = Number(record.amount || 0);
-
-    // Revertir efecto del registro anterior
-    if (oldAssetType === 'pesos') {
-      const revert = oldType === 'ingreso' ? -oldAmount : oldAmount;
-      await findAndAdjustWalletBalance(oldTargetId, dbOldRec.wallet_or_exchange_name, revert);
-    } else {
-      const revert = oldType === 'ingreso' ? -oldAmount : oldAmount;
-      await findAndAdjustExchangeBalance(oldTargetId, dbOldRec.wallet_or_exchange_name, revert);
+    if (!rpcRes) {
+      throw new Error('Supabase no devolvió el registro de fondos actualizado.');
     }
 
-    // Aplicar efecto del nuevo registro
-    if (newAssetType === 'pesos') {
-      const apply = newType === 'ingreso' ? newAmount : -newAmount;
-      await findAndAdjustWalletBalance(newTargetId, record.walletOrExchangeName, apply);
-    } else {
-      const apply = newType === 'ingreso' ? newAmount : -newAmount;
-      await findAndAdjustExchangeBalance(newTargetId, record.walletOrExchangeName, apply);
-    }
-
-    // 5. Actualizar la fila en income_expenses
-    const { data: updatedRec, error: recErr } = await supabase
-      .from('income_expenses')
-      .update({
-        type: record.type,
-        asset_type: record.assetType,
-        wallet_or_exchange_id: record.walletOrExchangeId,
-        wallet_or_exchange_name: record.walletOrExchangeName,
-        amount: record.amount,
-        transfer_person: record.transferPerson || null,
-        reason: record.reason || null,
-        proof_url: record.proofUrl || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', record.id)
-      .select()
-      .single();
-
-    if (recErr) {
-      console.error('Error al actualizar registro de fondos:', recErr.message);
-      throw new Error(recErr.message || 'Error al actualizar el registro de fondos.');
-    }
-
-    return updatedRec || record;
+    return mapIncomeExpenseFromDB(rpcRes);
   },
 
   async buy(params: {
@@ -466,6 +385,27 @@ export const transactionService = {
     await this.create(tx);
   },
 };
+
+function mapIncomeExpenseFromDB(row: any): IncomeExpenseRecord {
+  return {
+    id: row.id,
+    type: row.type,
+    assetType: row.asset_type || row.assetType || 'pesos',
+    walletOrExchangeId: row.wallet_or_exchange_id || row.walletOrExchangeId || '',
+    walletOrExchangeName: row.wallet_or_exchange_name || row.walletOrExchangeName || '',
+    timestamp: row.timestamp || new Date().toISOString(),
+    dateString: row.date_string || row.dateString || '',
+    timeString: row.time_string || row.timeString || '',
+    amount: Number(row.amount || 0),
+    transferPerson: row.transfer_person || row.transferPerson || '',
+    reason: row.reason || '',
+    proofUrl: row.proof_url || row.proofUrl || undefined,
+    operator: row.operator || '',
+    vendorId: row.vendor_id || row.vendorId || undefined,
+    organization_id: row.organization_id,
+    shiftId: row.shift_id || row.shiftId || undefined,
+  };
+}
 
 function mapTransactionFromDB(row: any): Transaction {
   return {
