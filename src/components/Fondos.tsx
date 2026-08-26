@@ -979,7 +979,7 @@ export default function Fondos({
         </div>
       )}
 
-      {/* EDIT INCOME/EXPENSE MODAL (rpc_income_expense_update_v2) */}
+      {/* EDIT INCOME/EXPENSE MODAL (rpc_income_expense_update_v3) */}
       {editingRecord && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-50">
           <div className="bg-binance-dark border border-binance-border rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
@@ -992,7 +992,7 @@ export default function Fondos({
                   <h3 className="font-extrabold text-white text-base font-display">
                     Editar Movimiento de Fondos
                   </h3>
-                  <span className="text-[10px] text-binance-gray">Actualización financiera vía RPC v2</span>
+                  <span className="text-[10px] text-binance-gray">Actualización financiera vía RPC v3</span>
                 </div>
               </div>
               <button
