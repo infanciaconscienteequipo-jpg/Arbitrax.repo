@@ -416,8 +416,8 @@ BEGIN
         RAISE EXCEPTION 'Tipo de activo inválido';
     END IF;
 
-    IF p_amount IS NULL OR p_amount <= 0 THEN
-        RAISE EXCEPTION 'El monto debe ser mayor a cero';
+    IF p_amount IS NULL OR p_amount < 0 THEN
+        RAISE EXCEPTION 'El monto no puede ser negativo';
     END IF;
 
     IF p_wallet_or_exchange_id IS NULL OR trim(p_wallet_or_exchange_id) = '' THEN

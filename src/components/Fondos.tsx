@@ -176,9 +176,9 @@ export default function Fondos({
     e.preventDefault();
     if (!editingRecord || !onUpdateIncomeExpense) return;
 
-    const numAmount = typeof editAmount === 'number' ? editAmount : 0;
-    if (numAmount <= 0) {
-      setEditError('El monto debe ser mayor a cero.');
+    const numAmount = typeof editAmount === 'number' ? editAmount : (parseFloat(String(editAmount)) || 0);
+    if (numAmount < 0) {
+      setEditError('El monto no puede ser negativo.');
       return;
     }
 

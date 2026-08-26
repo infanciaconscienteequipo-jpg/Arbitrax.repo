@@ -261,7 +261,7 @@ export const transactionService = {
       p_asset_type: record.assetType,
       p_wallet_or_exchange_id: record.walletOrExchangeId,
       p_wallet_or_exchange_name: record.walletOrExchangeName,
-      p_amount: Number(record.amount || 0),
+      p_amount: Number(record.amount ?? 0),
       p_transfer_person: record.transferPerson || null,
       p_reason: record.reason || null,
       p_proof_url: record.proofUrl || null,
