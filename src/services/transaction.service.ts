@@ -449,6 +449,7 @@ function mapTransactionToDB(t: Transaction) {
     total_pesos: t.totalPesos,
     wallet_id: t.walletId,
     wallet_name: t.walletName,
+    exchange_id: t.exchangeId || null,
     operator: t.operator,
     supplier: t.supplier || null,
     client: t.client || null,

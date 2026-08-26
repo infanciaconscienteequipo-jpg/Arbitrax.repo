@@ -15,6 +15,8 @@
 --  * Venta: resta crypto del exchange y suma ARS a wallet.
 -- ============================================================
 
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS exchange_id TEXT;
+
 CREATE OR REPLACE FUNCTION public.rpc_buy(
     p_crypto text,
     p_quantity numeric,
@@ -142,6 +144,7 @@ BEGIN
         total_pesos,
         wallet_id,
         wallet_name,
+        exchange_id,
         operator,
         supplier,
         client,
@@ -167,6 +170,7 @@ BEGIN
         p_total_pesos,
         v_wallet.id,
         v_wallet.name,
+        v_exchange.id,
         COALESCE(NULLIF(trim(p_operator), ''), v_actor),
         NULLIF(trim(COALESCE(p_supplier, '')), ''),
         NULL,
@@ -318,6 +322,7 @@ BEGIN
         total_pesos,
         wallet_id,
         wallet_name,
+        exchange_id,
         operator,
         supplier,
         client,
@@ -343,6 +348,7 @@ BEGIN
         p_total_pesos,
         v_wallet.id,
         v_wallet.name,
+        v_exchange.id,
         COALESCE(NULLIF(trim(p_operator), ''), v_actor),
         NULL,
         NULLIF(trim(COALESCE(p_client, '')), ''),
