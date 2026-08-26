@@ -62,7 +62,6 @@ export default function Exchanges({
 
   // Form State
   const [name, setName] = useState('');
-  const [balanceCrypto, setBalanceCrypto] = useState<number>(0);
   const [vendorId, setVendorId] = useState<string>('');
   const [isCreatingExchange, setIsCreatingExchange] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -237,7 +236,7 @@ export default function Exchanges({
       if (onAddExchange) {
         await onAddExchange({
           name: name.trim(),
-          balanceCrypto: Number(balanceCrypto) || 0,
+          balanceCrypto: 0,
           vendorId: assignedVendorId || undefined,
           vendorName: assignedVendorName || undefined,
           organization_id: currentOrgId,
@@ -245,7 +244,6 @@ export default function Exchanges({
       }
 
       setName('');
-      setBalanceCrypto(0);
       setVendorId('');
       setShowAddModal(false);
     } catch (err: any) {
@@ -680,21 +678,6 @@ export default function Exchanges({
                   value={name}
                   onChange={e => setName(e.target.value)}
                   className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-white outline-hidden focus:border-binance-yellow"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] text-binance-gray uppercase font-bold block mb-1">
-                  Saldo Inicial en Crypto (USDT) *
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  required
-                  placeholder="0.00"
-                  value={balanceCrypto}
-                  onChange={e => setBalanceCrypto(Number(e.target.value))}
-                  className="w-full px-3 py-2 bg-binance-card border border-binance-border rounded-xl text-binance-green font-bold outline-hidden focus:border-binance-yellow font-mono"
                 />
               </div>
 
